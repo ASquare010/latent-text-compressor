@@ -1,0 +1,7 @@
+{
+  "checkpoint": "artifacts/runs/paragraph/span32/last.pt",
+  "device": "auto",
+  "host": "127.0.0.1",
+  "port": 7860,
+  "max_characters": 16000
+}

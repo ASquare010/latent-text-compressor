@@ -1,0 +1,60 @@
+{
+  "data_dir": "artifacts/data/smoke",
+  "output_dir": "artifacts/runs/smoke",
+  "device": "cpu",
+  "seed": 17,
+  "threads": 4,
+  "microbatch": 2,
+  "accumulation": 1,
+  "learning_rate": 0.0003,
+  "minimum_lr": 3e-05,
+  "weight_decay": 0.01,
+  "clip": 1.0,
+  "checkpoint_every": 1,
+  "log_every": 1,
+  "fused_optimizer": true,
+  "model": {
+    "vocab_size": 512,
+    "width": 32,
+    "heads": 4,
+    "encoder_layers": 1,
+    "decoder_layers": 1,
+    "max_tokens": 64,
+    "span": 4
+  },
+  "dataset": {
+    "repo": "HuggingFaceFW/fineweb-edu",
+    "subset": "sample-10BT",
+    "revision": "87f09149ef4734204d70ed1d046ddc9ca3f2b8f9",
+    "counts": {
+      "train": 16,
+      "valid": 4,
+      "test": 4
+    },
+    "min_tokens": 1,
+    "max_tokens": 64,
+    "vocab_size": 512,
+    "max_documents": 500000
+  },
+  "stages": [
+    {
+      "name": "base",
+      "span": 4,
+      "updates": 3,
+      "schedule": "warmup_constant",
+      "warmup": 1,
+      "uniform": 0,
+      "patterns": 0
+    },
+    {
+      "name": "transfer",
+      "span": 8,
+      "updates": 3,
+      "schedule": "cosine",
+      "uniform": 16,
+      "uniform_seed": 219,
+      "patterns": 16,
+      "pattern_seed": 217
+    }
+  ]
+}
