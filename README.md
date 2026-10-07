@@ -1,8 +1,11 @@
 # Latent Text Compressor
 
-A small PyTorch encoder that turns **up to 256 text tokens into eight ordered memory vectors**, with a parallel decoder that reconstructs the text. The selected model uses **32 tokens per vector**, 256 features per vector, and Curve-Wide feed-forward layers.
+**v0.2.0 breaking change:** CurveFFN has been removed. Old checkpoints cannot load; train new Branch Sigmoid weights. No reconstruction or memory result has yet been measured for this revision. [Migration details](docs/branch_compressor_migration.md).
 
-**Research result:** the selected checkpoint reconstructed 1,000/1,000 development paragraphs and a separate 1,000/1,000 fresh confirmation paragraphs exactly. This is a measured result on bounded tests, not a guarantee for arbitrary text. [Results and limits](docs/results.md).
+
+A small PyTorch encoder that turns **up to 256 text tokens into eight ordered memory vectors**, with a parallel decoder that reconstructs the text. The selected model uses **32 tokens per vector**, 256 features per vector, and Branch Sigmoid feed-forward layers in both encoder and decoder.
+
+**Historical CurveFFN result (not this architecture):** the old checkpoint reconstructed 1,000/1,000 development paragraphs and a separate 1,000/1,000 fresh confirmation paragraphs exactly. This is a measured result on bounded tests, not a guarantee for arbitrary text. [Results and limits](docs/results.md).
 
 **No pretrained weights are downloaded or published by this project.** Train locally with the complete recipe below. A fresh clone's app needs a checkpoint before it can run.
 
@@ -61,7 +64,7 @@ Total: **7,000 optimizer updates**, effective batch 16. The last stage keeps lea
 Training prints loss and measured GPU memory, saves every 250 updates, evaluates the complete validation split at each stage end, and exports the final encoder. It never evaluates the reserved test split automatically. The final inference checkpoint is:
 
 ```text
-artifacts/runs/paragraph/span32/last.pt
+artifacts/runs/branch-sigmoid-v2/span32/last.pt
 ```
 
 The historical final 2,000-update transfer took about 413 seconds on the measured GPU; **that is not the time for the full recipe**, preparation, or evaluation. A new run may differ with tokenizer builds, data preparation and hardware. Measure its actual recovery rather than assuming the historical scores.
@@ -73,7 +76,7 @@ The historical final 2,000-update transfer took about 413 seconds on the measure
 uv run --no-sync python -m latent_text.cli train --config config/train.json --stop-after 250
 
 # Resume whichever stage checkpoint you reached.
-uv run --no-sync python -m latent_text.cli train --config config/train.json --resume artifacts/runs/paragraph/base8/last.pt
+uv run --no-sync python -m latent_text.cli train --config config/train.json --resume artifacts/runs/branch-sigmoid-v2/base8/last.pt
 ```
 
 Resume checks source hashes, configuration, data hashes and PyTorch/device identity. Checkpoints include optimizer and RNG state. Each run stores a source snapshot. New experiments should use a new `output_dir`; existing runs are never silently replaced. If memory is tight, before starting a new run reduce `microbatch` from 4 to 2 and increase `accumulation` from 4 to 8.
@@ -96,7 +99,7 @@ FineWeb-Edu is published by HuggingFaceFW under ODC-By; the dataset card also sp
 ## Inference
 
 ```sh
-uv run --no-sync python -m latent_text.cli infer --checkpoint artifacts/runs/paragraph/span32/last.pt --text "Invoice 17019: 17.09, not 19.07."
+uv run --no-sync python -m latent_text.cli infer --checkpoint artifacts/runs/branch-sigmoid-v2/span32/last.pt --text "Invoice 17019: 17.09, not 19.07."
 ```
 
 The output includes the exact input/reconstruction, exact-match status, token/vector counts and byte measurements. Use `--input artifacts/example.txt` to preserve multiline input and whitespace. Longer inputs use consecutive independent 256-token windows. They are not a single long-context reasoning window.
@@ -104,8 +107,8 @@ The output includes the exact input/reconstruction, exact-match status, token/ve
 ### Save vectors, then decode without the original text
 
 ```sh
-uv run --no-sync python -m latent_text.cli infer --checkpoint artifacts/runs/paragraph/span32/last.pt --text "The car is not ready. Do not ship it." --save-memory artifacts/car.pt
-uv run --no-sync python -m latent_text.cli infer --checkpoint artifacts/runs/paragraph/span32/last.pt --from-memory artifacts/car.pt
+uv run --no-sync python -m latent_text.cli infer --checkpoint artifacts/runs/branch-sigmoid-v2/span32/last.pt --text "The car is not ready. Do not ship it." --save-memory artifacts/car.pt
+uv run --no-sync python -m latent_text.cli infer --checkpoint artifacts/runs/branch-sigmoid-v2/span32/last.pt --from-memory artifacts/car.pt
 ```
 
 A memory file contains ordered vector chunks, exact token lengths and model/tokenizer identity hashes. It contains no source text, source token IDs or residual correction stream. The matching checkpoint still provides the decoder and tokenizer. Never discard irreplaceable source data based on this experimental reconstruction.
@@ -113,9 +116,9 @@ A memory file contains ordered vector chunks, exact token lengths and model/toke
 ### Encoder-only use
 
 ```sh
-uv run --no-sync python -m latent_text.cli export --checkpoint artifacts/runs/paragraph/span32/last.pt --output artifacts/encoder.pt
+uv run --no-sync python -m latent_text.cli export --checkpoint artifacts/runs/branch-sigmoid-v2/span32/last.pt --output artifacts/encoder.pt
 uv run --no-sync python -m latent_text.cli encode --encoder artifacts/encoder.pt --text "Amina ordered 17 batteries." --output artifacts/amina.pt
-uv run --no-sync python -m latent_text.cli infer --checkpoint artifacts/runs/paragraph/span32/last.pt --from-memory artifacts/amina.pt
+uv run --no-sync python -m latent_text.cli infer --checkpoint artifacts/runs/branch-sigmoid-v2/span32/last.pt --from-memory artifacts/amina.pt
 ```
 
 The exported encoder excludes the decoder. A latent bundle must keep its order and length metadata; individual vectors are not independently meaningful facts. Load checkpoints you generated or trust. Tensor loading uses `weights_only=True`.
@@ -144,9 +147,9 @@ Use `--extra cpu` instead of `--extra cuda` on a CPU machine. Training cells req
 ## Evaluate and verify
 
 ```sh
-uv run --no-sync python -m latent_text.cli evaluate --checkpoint artifacts/runs/paragraph/span32/last.pt --split valid --output artifacts/validation.json
-uv run --no-sync python -m latent_text.cli evaluate --checkpoint artifacts/runs/paragraph/span32/last.pt --split valid --control zero --output artifacts/zero-memory.json
-uv run --no-sync python -m latent_text.cli evaluate --checkpoint artifacts/runs/paragraph/span32/last.pt --split valid --control shuffle --output artifacts/shuffled-memory.json
+uv run --no-sync python -m latent_text.cli evaluate --checkpoint artifacts/runs/branch-sigmoid-v2/span32/last.pt --split valid --output artifacts/validation.json
+uv run --no-sync python -m latent_text.cli evaluate --checkpoint artifacts/runs/branch-sigmoid-v2/span32/last.pt --split valid --control zero --output artifacts/zero-memory.json
+uv run --no-sync python -m latent_text.cli evaluate --checkpoint artifacts/runs/branch-sigmoid-v2/span32/last.pt --split valid --control shuffle --output artifacts/shuffled-memory.json
 uv run --no-sync python -m pytest -q --basetemp artifacts/test-temp
 ```
 
@@ -173,7 +176,7 @@ text -> reversible BPE -> token + position embeddings
      -> all original token positions predicted at once -> text
 ```
 
-All architecture code, including Curve-Wide, is in [model.py](src/latent_text/model.py). There is no VAE sampling, pretrained embedding model, teacher-forced decoder input, or encoder-to-decoder bypass. The decoder expands the memory back to token length and attends over those expanded positions. Future LLM consumption of only the short memory sequence is a separate experiment.
+The encoder/decoder are in [model.py](src/latent_text/model.py); the selected Branch Sigmoid FFN is in [ffn.py](src/latent_text/ffn.py). There is no VAE sampling, pretrained embedding model, teacher-forced decoder input, or encoder-to-decoder bypass. The decoder expands the memory back to token length and attends over those expanded positions. Future LLM consumption of only the short memory sequence is a separate experiment.
 
 ## Structure
 

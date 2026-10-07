@@ -1,3 +1,5 @@
+> Historical CurveFFN documentation. Active v0.2.0 uses an untrained Branch Sigmoid architecture; old scores and checkpoint compatibility do not apply.
+
 # Reconstruction results
 
 These are bounded reconstruction experiments, not language-model benchmarks or proof of universal lossless compression. Scores below were measured in the original research workspace. This standalone port also rechecked the selected trained checkpoint; it has not yet rerun the full 7,000-update recipe from scratch.

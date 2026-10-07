@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "latent-text-compressor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Ordered learned text memories and parallel paragraph reconstruction"
 readme = "README.md"
 license = "MIT"

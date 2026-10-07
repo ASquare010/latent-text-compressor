@@ -1,3 +1,5 @@
+> Historical CurveFFN documentation. Active v0.2.0 uses an untrained Branch Sigmoid architecture; old scores and checkpoint compatibility do not apply.
+
 # Research and development board
 
 ## Current milestone

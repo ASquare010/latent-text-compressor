@@ -1,6 +1,6 @@
 {
   "data_dir": "artifacts/data/fineweb",
-  "output_dir": "artifacts/runs/paragraph",
+  "output_dir": "artifacts/runs/branch-sigmoid-v2",
   "device": "auto",
   "seed": 17,
   "threads": 4,
@@ -20,7 +20,9 @@
     "encoder_layers": 4,
     "decoder_layers": 1,
     "max_tokens": 256,
-    "span": 8
+    "span": 8,
+    "ffn": "branch_sigmoid_v1",
+    "hidden": 1024
   },
   "dataset": {
     "repo": "HuggingFaceFW/fineweb-edu",

@@ -4,14 +4,14 @@ There are no encoder-to-decoder skip connections or supplied output tokens.
 Exact token lengths are explicit metadata and must be counted when storing memory.
 """
 
-import hashlib
 import math
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+from .ffn import CompressorBranchFFN
 
 
 class RMSNorm(nn.Module):
@@ -24,70 +24,6 @@ class RMSNorm(nn.Module):
         return (normalized * self.weight).to(x.dtype)
 
 
-def parameter_generator(seed: int, name: str) -> torch.Generator:
-    digest = hashlib.sha256(f"{seed}:{name}".encode()).digest()
-    return torch.Generator().manual_seed(int.from_bytes(digest[:8], "little"))
-
-
-class CurveFFN(nn.Module):
-    """Mix features, apply learned curves, then mix features again."""
-
-    def __init__(self, config):
-        super().__init__()
-        self.width = config.width
-        self.up = nn.Linear(config.width, config.width, bias=False)
-        self.down = nn.Linear(config.width, config.width, bias=False)
-        self.initial_slopes = [0.5, 1.0, 1.5]
-        self.initial_offsets = [-1.0, 0.0, 1.0]
-        templates = torch.tensor(self.initial_slopes)[:, None].expand(3, config.width).clone()
-        offsets = torch.tensor(self.initial_offsets)[:, None].expand(3, config.width).clone()
-        # Keep parameter names compatible with the measured checkpoints.
-        self.a = nn.Parameter(templates)
-        self.b = nn.Parameter(offsets)
-        self.c = nn.Parameter(torch.ones(3, config.width))
-        self.e = nn.Parameter(torch.zeros(3, config.width))
-        self.initial_mean, self.scale = calibration(config.width)
-        self.projection_parameters = 2 * config.width**2
-
-    def forward(self, x):
-        z = self.up(x)  # Mix the token's features: width -> width.
-        output_dtype = z.dtype
-        # Keep curve arithmetic in FP32 during mixed-precision training.
-        z = z if z.dtype == torch.float64 else z.float()
-
-        value = torch.zeros_like(z)
-        for branch in range(3):
-            response = F.silu(self.a[branch] * z + self.b[branch])
-            multiplier = self.c[branch] * z + self.e[branch]
-            value = value + response * multiplier
-
-        value = self.scale * (value / math.sqrt(3) - self.initial_mean)
-        return self.down(value.to(output_dtype))  # Mix features back into the output.
-
-    @torch.no_grad()
-    def initialize(self, seed, prefix, residual_scale):
-        self.up.weight.normal_(0, 0.02, generator=parameter_generator(seed, f"{prefix}.up.weight"))
-        self.down.weight.normal_(
-            0, 0.02 * residual_scale, generator=parameter_generator(seed, f"{prefix}.down.weight")
-        )
-
-
-def calibration(width, nodes=128):
-    """Fixed starting mean and scale; preserve the measured initialization."""
-    points, weights = np.polynomial.hermite.hermgauss(nodes)
-    z = torch.from_numpy(points) * math.sqrt(2 * width * 0.02**2)
-    w = torch.from_numpy(weights) / math.sqrt(math.pi)
-    slopes = torch.tensor([0.5, 1.0, 1.5], dtype=torch.float64)
-    offsets = torch.tensor([-1.0, 0.0, 1.0], dtype=torch.float64)
-    branches = F.silu(slopes[:, None] * z + offsets[:, None])
-    variance = width * 0.02**2
-    target = (1376 / 512) * variance * float((w * F.silu(z).square()).sum())
-    raw = z * branches.sum(0) / math.sqrt(3)
-    mean = float((raw * w).sum())
-    initial_variance = float(((raw - mean).square() * w).sum())
-    return mean, math.sqrt(target / initial_variance)
-
-
 @dataclass
 class Config:
     vocab_size: int = 4096
@@ -96,12 +32,16 @@ class Config:
     encoder_layers: int = 4
     decoder_layers: int = 1
     max_tokens: int = 256
-    span: int = 8
+    span: int = 32
+    hidden: int = 1024
+    ffn: str = "branch_sigmoid_v1"
     pad_id: int = 0
     bos_id: int = 1
     eos_id: int = 2
 
     def __post_init__(self):
+        if self.ffn != "branch_sigmoid_v1" or type(self.hidden) is not int or self.hidden < 1:
+            raise ValueError("Expected branch_sigmoid_v1 and positive hidden calibration width")
         for name in (
             "vocab_size",
             "width",
@@ -150,7 +90,7 @@ class EncoderBlock(nn.Module):
         self.attention_norm = RMSNorm(config.width)
         self.attention = Attention(config)
         self.ffn_norm = RMSNorm(config.width)
-        self.ffn = CurveFFN(config)
+        self.ffn = CompressorBranchFFN(config)
 
     def forward(self, x, mask):
         normalized = self.attention_norm(x)
@@ -180,7 +120,7 @@ class Model(nn.Module):
                 if isinstance(module, (nn.Linear, nn.Embedding)):
                     nn.init.normal_(module.weight, std=0.02)
             for name, module in self.named_modules():
-                if isinstance(module, CurveFFN):
+                if isinstance(module, CompressorBranchFFN):
                     module.initialize(seed, name, 1 / math.sqrt(2 * c.encoder_layers))
 
     def encode(self, tokens, mask):

@@ -1,5 +1,5 @@
 {
-  "checkpoint": "artifacts/runs/paragraph/span32/last.pt",
+  "checkpoint": "artifacts/runs/branch-sigmoid-v2/span32/last.pt",
   "device": "auto",
   "host": "127.0.0.1",
   "port": 7860,
