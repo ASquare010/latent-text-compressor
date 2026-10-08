@@ -1,89 +1,33 @@
 {
-  "data_dir": "artifacts/data/fineweb",
-  "output_dir": "artifacts/runs/branch-sigmoid-v2",
-  "device": "auto",
-  "seed": 17,
-  "threads": 4,
-  "microbatch": 4,
-  "accumulation": 4,
-  "learning_rate": 0.0003,
-  "minimum_lr": 3e-05,
-  "weight_decay": 0.01,
-  "clip": 1.0,
-  "checkpoint_every": 250,
-  "log_every": 50,
-  "fused_optimizer": true,
+  "mode": "residual64_continuation",
+  "additional_updates": 15000,
+  "checkpoint": "artifacts/runs/residual64-long-10000-v1/continue_plain/last.pt",
+  "checkpoint_sha256": "2eabeb7bc46654893a17d2cf17838b464d7c8e2318d4fa0deee0c83f22878a24",
+  "output_dir": "artifacts/runs/residual64-continue-15000",
+  "learning_rate": 3e-05,
+  "inherited_updates": 44000,
+  "inherited_optimizer_steps": 14000,
+  "sampler_seed": 43,
+  "data_dir": "D:/Git/complex_fnn/dump/data/paragraph-fineweb-v1",
+  "packed_data_dir": "D:/Git/complex_fnn/dump/data/paragraph-packed512-affinity-v5",
   "model": {
     "vocab_size": 4096,
     "width": 256,
     "heads": 4,
     "encoder_layers": 4,
     "decoder_layers": 1,
-    "max_tokens": 256,
-    "span": 8,
+    "max_tokens": 512,
+    "span": 64,
+    "hidden": 1024,
     "ffn": "branch_sigmoid_v1",
-    "hidden": 1024
+    "position_encoding": "rope_v1",
+    "rope_base": 10000.0,
+    "pad_id": 0,
+    "bos_id": 1,
+    "eos_id": 2,
+    "variant": "depth_route",
+    "code_features": 125,
+    "routed_layers": 4
   },
-  "dataset": {
-    "repo": "HuggingFaceFW/fineweb-edu",
-    "subset": "sample-10BT",
-    "revision": "87f09149ef4734204d70ed1d046ddc9ca3f2b8f9",
-    "counts": {
-      "train": 50000,
-      "valid": 1000,
-      "test": 1000
-    },
-    "min_tokens": 32,
-    "max_tokens": 256,
-    "vocab_size": 4096,
-    "max_documents": 500000
-  },
-  "stages": [
-    {
-      "name": "base8",
-      "span": 8,
-      "updates": 2000,
-      "schedule": "warmup_constant",
-      "warmup": 100,
-      "uniform": 0,
-      "patterns": 0
-    },
-    {
-      "name": "natural8",
-      "span": 8,
-      "updates": 1000,
-      "schedule": "cosine",
-      "uniform": 0,
-      "patterns": 0
-    },
-    {
-      "name": "coverage8",
-      "span": 8,
-      "updates": 1000,
-      "schedule": "cosine",
-      "uniform": 50000,
-      "uniform_seed": 117,
-      "patterns": 0
-    },
-    {
-      "name": "patterns8",
-      "span": 8,
-      "updates": 1000,
-      "schedule": "cosine",
-      "uniform": 25000,
-      "uniform_seed": 219,
-      "patterns": 25000,
-      "pattern_seed": 217
-    },
-    {
-      "name": "span32",
-      "span": 32,
-      "updates": 2000,
-      "schedule": "cosine",
-      "uniform": 25000,
-      "uniform_seed": 219,
-      "patterns": 25000,
-      "pattern_seed": 217
-    }
-  ]
+  "note": "Additional updates from saved model;no100% guarantee;does not run until explicitly invoked."
 }

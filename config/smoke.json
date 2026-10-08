@@ -22,7 +22,11 @@
     "max_tokens": 64,
     "span": 4,
     "ffn": "branch_sigmoid_v1",
-    "hidden": 1024
+    "hidden": 1024,
+    "position_encoding": "rope_v1",
+    "rope_base": 10000.0,
+    "variant": "depth_route",
+    "code_features": 16
   },
   "dataset": {
     "repo": "HuggingFaceFW/fineweb-edu",

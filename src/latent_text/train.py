@@ -14,6 +14,12 @@ from .codec import Codec
 from .data import batch, load_data
 from .evaluate import evaluate
 from .model import Config, Model
+from .residual import Config as ResidualConfig
+from .codec import model_from_config
+
+def recipe_config(values):
+    return ResidualConfig(**values) if values.get("variant") == "depth_route" else Config(**values)
+
 from .runtime import (
     artifact_path,
     autocast,
@@ -54,7 +60,7 @@ def make_optimizer(model, recipe, device):
 
 
 def validate_recipe(recipe):
-    Config(**recipe["model"])
+    recipe_config(recipe["model"])
     for key in ("threads", "microbatch", "accumulation", "checkpoint_every", "log_every"):
         if type(recipe[key]) is not int or recipe[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
@@ -68,7 +74,7 @@ def validate_recipe(recipe):
         if not name.replace("_", "").replace("-", "").isalnum() or name in names:
             raise ValueError("Stage names must be unique simple folder names")
         names.add(name)
-        Config(**{**recipe["model"], "span": stage["span"]})
+        recipe_config({**recipe["model"], "span": stage["span"]})
         if stage["updates"] < 1 or stage["schedule"] not in ("cosine", "warmup_constant"):
             raise ValueError("Invalid stage schedule or update count")
         if min(stage.get("uniform", 0), stage.get("patterns", 0)) < 0:
@@ -108,7 +114,7 @@ def train(recipe, resume=None, stop_after=None):
             torch.__version__
         ):
             raise ValueError("Exact resume requires the same device type and PyTorch build")
-        model = Model(Config(**state["protocol"]["model"]), recipe["seed"]).to(device)
+        model = model_from_config(state["protocol"]["model"], recipe["seed"]).to(device)
         model.load_state_dict(state["model"])
         optimizer = make_optimizer(model, recipe, device)
         optimizer.load_state_dict(state["optimizer"])
@@ -124,8 +130,8 @@ def train(recipe, resume=None, stop_after=None):
     else:
         if output.exists() and any(output.iterdir()):
             raise ValueError("Run directory already exists; use --resume or a new output_dir")
-        config = Config(**{**recipe["model"], "span": recipe["stages"][0]["span"]})
-        model = Model(config, recipe["seed"]).to(device)
+        config = recipe_config({**recipe["model"], "span": recipe["stages"][0]["span"]})
+        model = model_from_config(asdict(config), recipe["seed"]).to(device)
         optimizer = make_optimizer(model, recipe, device)
         output.mkdir(parents=True, exist_ok=True)
         write_json(output / "recipe.json", recipe)
@@ -149,15 +155,15 @@ def train(recipe, resume=None, stop_after=None):
         step = stage_step if index == stage_index else 0
         if model.config.span != stage["span"]:
             # Preserve learned blocks; only the differently shaped span maps start fresh.
-            config = Config(**{**asdict(model.config), "span": stage["span"]})
-            new_model = Model(config, recipe["seed"]).to(device)
+            config = recipe_config({**asdict(model.config), "span": stage["span"]})
+            new_model = model_from_config(asdict(config), recipe["seed"]).to(device)
             shared = {
                 k: v
                 for k, v in model.state_dict().items()
-                if k not in ("compress.weight", "expand.weight")
+                if not k.startswith(("compress.", "expand."))
             }
             missing = new_model.load_state_dict(shared, strict=False)
-            assert set(missing.missing_keys) == {"compress.weight", "expand.weight"}
+            assert set(missing.missing_keys) == {k for k in new_model.state_dict() if k.startswith(("compress.", "expand."))}
             assert not missing.unexpected_keys
             model = new_model
             optimizer = make_optimizer(model, recipe, device)
@@ -236,6 +242,7 @@ def train(recipe, resume=None, stop_after=None):
                 "lr": lr,
                 "seconds": time.perf_counter() - started,
                 "peak_allocated_mib": peak,
+                "peak_reserved_mib": torch.cuda.max_memory_reserved() / 2**20 if device == "cuda" else 0.0,
             }
             with (output / "training.jsonl").open("a", encoding="utf-8") as log:
                 log.write(json.dumps(stats) + "\n")

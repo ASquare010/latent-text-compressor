@@ -35,6 +35,8 @@ class Config:
     span: int = 32
     hidden: int = 1024
     ffn: str = "branch_sigmoid_v1"
+    position_encoding: str = "rope_v1"
+    rope_base: float = 10000.0
     pad_id: int = 0
     bos_id: int = 1
     eos_id: int = 2
@@ -55,6 +57,10 @@ class Config:
                 raise ValueError(f"{name} must be positive")
         if self.width % self.heads or self.span > self.max_tokens:
             raise ValueError("Width must divide into heads; span must fit max_tokens")
+        if self.position_encoding != "rope_v1" or self.width // self.heads % 2:
+            raise ValueError("RoPE requires an even head dimension and rope_v1")
+        if not math.isfinite(self.rope_base) or self.rope_base <= 1:
+            raise ValueError("rope_base must be finite and greater than one")
         if (self.pad_id, self.bos_id, self.eos_id) != (0, 1, 2):
             raise ValueError("Data format uses pad=0, bos=1, eos=2")
 
@@ -67,6 +73,21 @@ class Attention(nn.Module):
         self.key = nn.Linear(config.width, config.width, bias=False)
         self.value = nn.Linear(config.width, config.width, bias=False)
         self.out = nn.Linear(config.width, config.width, bias=False)
+        dimension = config.width // config.heads
+        inverse = config.rope_base ** (-torch.arange(0, dimension, 2).float() / dimension)
+        angles = torch.outer(torch.arange(config.max_tokens).float(), inverse)
+        self.register_buffer("cos", angles.cos()[None, None], persistent=False)
+        self.register_buffer("sin", angles.sin()[None, None], persistent=False)
+
+    def rotate(self, x):
+        # Rotate query/key pairs in FP32; values retain their content representation.
+        cosine, sine = self.cos[:, :, : x.shape[-2]], self.sin[:, :, : x.shape[-2]]
+        even, odd = x.float()[..., 0::2], x.float()[..., 1::2]
+        return (
+            torch.stack((even * cosine - odd * sine, even * sine + odd * cosine), -1)
+            .flatten(-2)
+            .to(x.dtype)
+        )
 
     def forward(self, x, context, valid, causal=False):
         def split(t):
@@ -80,7 +101,7 @@ class Attention(nn.Module):
                 allowed
                 & torch.ones(x.shape[1], context.shape[1], device=x.device, dtype=torch.bool).tril()
             )
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=allowed)
+        y = F.scaled_dot_product_attention(self.rotate(q), self.rotate(k), v, attn_mask=allowed)
         return self.out(y.transpose(1, 2).reshape_as(x))
 
 
@@ -108,7 +129,6 @@ class Model(nn.Module):
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(seed)
             self.embedding = nn.Embedding(c.vocab_size, c.width)
-            self.position = nn.Embedding(c.max_tokens, c.width)
             self.encoder = nn.ModuleList([EncoderBlock(c) for _ in range(c.encoder_layers)])
             self.encoder_norm = RMSNorm(c.width)
             # Concatenation preserves the order inside each span, unlike weighted averaging.
@@ -131,9 +151,7 @@ class Model(nn.Module):
             raise ValueError("Input must have 1..max_tokens real tokens")
         if (mask[:, 1:] & ~mask[:, :-1]).any():
             raise ValueError("Use right padding")
-        x = self.embedding(tokens) + self.position(
-            torch.arange(tokens.shape[1], device=tokens.device)
-        )
+        x = self.embedding(tokens)
         for block in self.encoder:
             x = block(x, mask)
         x = self.encoder_norm(x) * mask.unsqueeze(-1)
@@ -156,7 +174,6 @@ class Model(nn.Module):
         x = self.expand(z).reshape(z.shape[0], -1, c.width)[:, : int(lengths.max())]
         positions = torch.arange(x.shape[1], device=x.device)
         mask = positions[None] < lengths[:, None]
-        x = x + self.position(positions)
         for block in self.decoder:
             x = block(x, mask)
         return F.linear(self.decoder_norm(x), self.embedding.weight)

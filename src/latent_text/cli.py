@@ -85,9 +85,16 @@ def run(args):
         path = prepare(config["data_dir"], documents, **config["dataset"])
         print(f"Prepared: {path}")
     elif args.command == "train":
-        from .train import train
-
-        train(read_config(args.config), args.resume, args.stop_after)
+        recipe = read_config(args.config)
+        if recipe.get("mode") == "residual64_continuation":
+            if args.resume or args.stop_after:
+                raise ValueError("The continuation checkpoint and budget are set in config/train.json")
+            import subprocess, sys
+            runner = Path(__file__).resolve().parents[2] / "notebooks/train_residual64.py"
+            subprocess.run([sys.executable, str(runner), "--config", str(Path(args.config).resolve())], check=True)
+        else:
+            from .train import train
+            train(recipe, args.resume, args.stop_after)
     elif args.command == "app":
         from .app import launch
 
