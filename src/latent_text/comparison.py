@@ -39,13 +39,26 @@ from .durable import (
     publish_checkpoint,
     read_json,
     recover,
+    run_folder,
     sha256,
     verified_load,
 )
-from .model import Config, Model
+from .residual import Config, Model
 
 
-def setup(config):
+def setup(config, name=None):
+    import psutil
+
+    name = name or next(iter(config["models"]))
+    cpu = (
+        config["worker_cpu_affinity"][name]
+        if "worker_cpu_affinity" in config
+        else config["cpu_affinity"]
+    )
+    process = psutil.Process()
+    if not 0 <= cpu < psutil.cpu_count(logical=True):
+        raise RuntimeError(f"Configured logical CPU {cpu} is unavailable")
+    process.cpu_affinity([cpu])
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.set_num_threads(config["threads"])
     torch.use_deterministic_algorithms(True)
@@ -94,11 +107,22 @@ def validate_config(c):
         raise ValueError("Require a cosine phase after warmup and BF16 precision")
     if not 0 < c["minimum_lr"] <= c["learning_rate"] or c["clip"] <= 0:
         raise ValueError("Invalid optimizer settings")
-    if set(c["models"]) - {"A", "B", "C"} or not c["models"]:
-        raise ValueError("Select A, B and/or C")
+    if not c.get("models"):
+        raise ValueError("Specify encoder, decoder, context and span through latent_text.cli train")
+    if any(
+        not name
+        or any(
+            ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            for ch in name
+        )
+        for name in c["models"]
+    ):
+        raise ValueError("Model names may contain only letters, numbers, '-' and '_'")
+    if c.get("flat_output") and len(c["models"]) != 1:
+        raise ValueError("A flat output folder requires exactly one model")
     for value in c["models"].values():
         cfg = Config(**(c["model"] | value))
-        if cfg.positional != "rope" or cfg.ffn != "branch_sigmoid_v1":
+        if cfg.position_encoding != "rope_v1" or cfg.ffn != "branch_sigmoid_v1":
             raise ValueError("Comparison requires RoPE and Branch Sigmoid")
     output = Path(c["output_dir"]).resolve()
     if not output.is_relative_to((Path.cwd() / "artifacts").resolve()):
@@ -166,7 +190,7 @@ def memory():
 def probe(config_path, name, microbatch, output):
     c = read_json(config_path)
     validate_config(c)
-    setup(c)
+    setup(c, name)
     if c["effective_batch"] % microbatch:
         raise ValueError("Microbatch must divide effective batch")
     cfg = Config(**(c["model"] | c["models"][name]))
@@ -469,13 +493,28 @@ def final_verification(folder, c, protocol, name, micro):
     return checks
 
 
+def format_progress(status):
+    """Compact terminal display; complete diagnostics remain in the durable records."""
+    step, target = status["step"], status["target"]
+    minutes, seconds = divmod(int(status["elapsed_seconds"]), 60)
+    hours, minutes = divmod(minutes, 60)
+    return (
+        f"Step {step:,}/{target:,} ({step / target:.1%})"
+        f" | Loss {status['nll']:.4f}"
+        f" | LR {status['lr']:.2e}"
+        f" | {status['seconds']:.2f}s/step"
+        f" | Time {hours:02d}:{minutes:02d}:{seconds:02d}"
+        f" | VRAM reserved {status['reserved_mib'] / 1024:.2f} GiB"
+    )
+
+
 def worker(frozen_path, name, resume=False):
     protocol = load_frozen(frozen_path)
     c = protocol["config"]
-    setup(c)
+    setup(c, name)
     if environment() != protocol["environment"]:
         raise ValueError("Environment changed since freeze")
-    folder = Path(c["output_dir"]) / name
+    folder = run_folder(c, name)
     folder.mkdir(parents=True, exist_ok=True)
     with OwnedLock(folder / "worker.lock"):
         return _worker(folder, c, protocol, name, resume)
@@ -586,7 +625,9 @@ def _worker(folder, c, protocol, name, resume):
                 "microbatch": micro,
                 "accumulation": c["effective_batch"] // micro,
             }
-            return publish_checkpoint(folder, state, c["milestone_every"])
+            checkpoint = publish_checkpoint(folder, state, c["milestone_every"])
+            print(f"Checkpoint saved at step {step:,}", flush=True)
+            return checkpoint
 
         if not resume:
             save()
@@ -596,6 +637,10 @@ def _worker(folder, c, protocol, name, resume):
                 atomic_json(
                     folder / "status.json",
                     {"state": "paused", "step": step, "target": c["updates"]},
+                )
+                print(
+                    f"Paused at step {step:,}; checkpoint saved. Use --resume to continue.",
+                    flush=True,
                 )
                 return
             begin = time.perf_counter()
@@ -633,6 +678,7 @@ def _worker(folder, c, protocol, name, resume):
             history.append(stats)
             journal(evidence, {"event": "completed", "attempt": attempt, **stats})
             if step % c["evaluate_every"] == 0 or step == c["updates"]:
+                print(f"Validating at step {step:,}...", flush=True)
                 metrics = evaluate_pair(model, c, micro)
                 validations.append({"step": step, "metrics": metrics})
                 score = metrics["shared_short"]["groups"]["all"]
@@ -640,7 +686,16 @@ def _worker(folder, c, protocol, name, resume):
                 if best is None or key < best["key"]:
                     best = {"step": step, "key": key}
                 atomic_json(folder / "validation" / f"step-{step:06d}.json", validations[-1])
-                print(name, "validation", step, score, flush=True)
+                for suite, result in metrics.items():
+                    summary = result["groups"]["all"]
+                    label = "Shared short texts" if suite == "shared_short" else "Packed texts"
+                    print(
+                        f"  {label} | Exact {summary['exact']:,}/{summary['sequences']:,}"
+                        f" ({summary['exact_recovery']:.1%})"
+                        f" | Token accuracy {summary['token_accuracy']:.2%}"
+                        f" | Loss {summary['nll']:.4f}",
+                        flush=True,
+                    )
             if (
                 step % c["checkpoint_every"] == 0
                 or step % c["evaluate_every"] == 0
@@ -660,10 +715,14 @@ def _worker(folder, c, protocol, name, resume):
                     **stats,
                 }
                 atomic_json(folder / "status.json", status)
-                print(json.dumps(status), flush=True)
+                print(format_progress(status), flush=True)
         model = optimizer = sampler = store = None
         gc.collect()
         torch.cuda.empty_cache()
+        print(
+            "Training updates finished. Verifying checkpoints, validation and exports...",
+            flush=True,
+        )
         final_verification(folder, c, protocol, name, micro)
         atomic_json(
             folder / "status.json",
@@ -673,6 +732,10 @@ def _worker(folder, c, protocol, name, resume):
                 "training_tokens": training_tokens,
                 "elapsed_seconds": elapsed_before + time.perf_counter() - started,
             },
+        )
+        print(
+            f"Complete: {step:,} updates | {training_tokens:,} training tokens | Saved in {folder}",
+            flush=True,
         )
     except BaseException:
         failure = {
@@ -706,8 +769,8 @@ def main():
     )
     parser.add_argument("--config", default="config/comparison.json")
     parser.add_argument("--frozen")
-    parser.add_argument("--model", choices=["A", "B", "C"])
-    parser.add_argument("--microbatch", type=int, default=2)
+    parser.add_argument("--model", help="Run identifier in the frozen configuration")
+    parser.add_argument("--microbatch", type=int, default=32)
     parser.add_argument("--output")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()

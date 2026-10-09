@@ -1,11 +1,134 @@
-"""A local playground. Checkpoint choice belongs to the operator, not remote visitors."""
+"""A local playground with a dropdown of operator-approved saved models."""
 
 import difflib
+import gc
 from pathlib import Path
+from threading import RLock
 
 import gradio as gr
 
 from .codec import Codec
+from .durable import read_json, resolve_checkpoint
+
+
+def discover_models(config):
+    """List configured weights and published run pointers; never arbitrary visitor paths."""
+    choices = {}
+    configured = config.get("checkpoint")
+    if configured and Path(configured).is_file():
+        path = Path(configured).resolve()
+        choices[str(path)] = ("Configured model", path)
+    root = Path(config.get("models_dir", "artifacts/training"))
+    for folder in sorted([*root.glob("*"), *root.glob("*/*")]):
+        if not folder.is_dir():
+            continue
+        for which in ("best", "last"):
+            pointer = folder / f"{which}.json"
+            if not pointer.is_file():
+                continue
+            run_label = (
+                folder.name
+                if folder.parent == root
+                else f"Model {folder.name} · {folder.parent.name}"
+            )
+            label = f"{run_label} · {'Best' if which == 'best' else 'Latest'}"
+            try:
+                step = read_json(pointer).get("step")
+                if isinstance(step, int):
+                    label += f" · update {step:,}"
+            except (OSError, ValueError):
+                # Keep the choice visible; loading will report damaged metadata.
+                pass
+            path = pointer.resolve()
+            choices.setdefault(str(path), (label, path))
+    return choices
+
+
+class InferenceModels:
+    """Keep one model in memory and use each request's explicit selection."""
+
+    def __init__(self, config):
+        self.config = config
+        self.choices = discover_models(config)
+        self.codec = None
+        self.cache_key = None
+        self.lock = RLock()
+
+    def options(self):
+        return [(label, key) for key, (label, _) in self.choices.items()]
+
+    def release(self):
+        on_cuda = self.codec is not None and self.codec.device == "cuda"
+        self.codec = None
+        self.cache_key = None
+        gc.collect()
+        if on_cuda:
+            import torch
+
+            torch.cuda.empty_cache()
+
+    def load(self, selected):
+        # Callers hold the lock across both loading and inference. Another browser
+        # session cannot switch the shared cache halfway through reconstruction.
+        if selected not in self.choices:
+            raise gr.Error(
+                "Select a saved model from the dropdown. Use Refresh models after training saves a checkpoint."
+            )
+        _, source = self.choices[selected]
+        try:
+            if source.suffix == ".json":
+                # The pointer changes as training progresses. Include its checksum
+                # in the cache key so Latest never silently serves stale weights.
+                reference = read_json(source)
+                key = (str(source), reference["metadata"], reference["sha256"])
+                if key == self.cache_key:
+                    return self.codec
+                path = resolve_checkpoint(source.parent, source.stem)
+            else:
+                stat = source.stat()
+                key = (str(source), stat.st_mtime_ns, stat.st_size)
+                if key == self.cache_key:
+                    return self.codec
+                path = source
+            self.release()
+            self.codec = Codec.load(path, self.config.get("device", "auto"))
+            self.cache_key = key
+            return self.codec
+        except Exception as exc:
+            raise gr.Error(f"Could not load this model: {exc}") from exc
+
+    def select(self, selected):
+        with self.lock:
+            if not selected:
+                self.release()
+                message = "No saved models yet. Train a model, then click **Refresh models**."
+            else:
+                codec = self.load(selected)
+                c = codec.model.config
+                message = (
+                    f"**{c.encoder_layers} encoder / {c.decoder_layers} decoder layers** · "
+                    f"**{c.max_tokens}-token context** · **{c.span} tokens per vector** · "
+                    f"{c.width} features per vector · {codec.device.upper()}"
+                )
+            # Clear previous results so they cannot be mistaken for this model's output.
+            return message, "", "", None, "", gr.Button(interactive=bool(selected))
+
+    def refresh(self, selected):
+        with self.lock:
+            self.choices = discover_models(self.config)
+            if selected not in self.choices:
+                selected = next(iter(self.choices), None)
+            dropdown = gr.Dropdown(choices=self.options(), value=selected, interactive=True)
+            return dropdown, *self.select(selected)
+
+    def reconstruct(self, text, selected):
+        with self.lock:
+            codec = self.load(selected)
+            output, status, stats, differences = compare(
+                codec, text, self.config.get("max_characters", 16000)
+            )
+            stats["model"] = self.choices[selected][0]
+            return output, status, stats, differences
 
 
 def compare(codec, text, limit):
@@ -25,30 +148,40 @@ def compare(codec, text, limit):
 
 
 def build_app(config):
-    path = Path(config["checkpoint"])
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Checkpoint not found: {path}. Train with 'latent-text train --config config/train.json', "
-            "or set checkpoint in config/app.json. No weights are downloaded automatically."
-        )
-    codec = Codec.load(path, config.get("device", "auto"))
+    models = InferenceModels(config)
+    selected = next(iter(models.choices), None)
     with gr.Blocks(title="Latent Text Compressor", analytics_enabled=False) as demo:
         gr.Markdown(
             "# Latent Text Compressor\n"
             "Turn text into fewer learned memory vectors, then reconstruct every position "
             "in parallel. Try names, numbers, negation and whitespace."
         )
+        with gr.Row():
+            model = gr.Dropdown(
+                choices=models.options(),
+                value=selected,
+                label="Inference model",
+                info="Choose a saved model and checkpoint.",
+                allow_custom_value=False,
+                interactive=True,
+                scale=4,
+            )
+            refresh = gr.Button("Refresh models", scale=1)
+        details = gr.Markdown(
+            "Select a model to load its saved weights."
+            if selected
+            else "No saved models yet. Train a model, then click **Refresh models**."
+        )
         gr.Markdown(
-            f"**{codec.model.config.span} tokens per vector** at full windows · "
-            f"{codec.model.config.width} features per vector · {codec.device.upper()}\n\n"
-            "This is an experimental model and can make mistakes. Long inputs use independent "
-            f"{codec.model.config.max_tokens}-token windows. Fewer vectors do not necessarily "
-            "mean fewer bytes than the original text."
+            "Reconstruction can contain mistakes. Long inputs use independent windows. "
+            "Fewer vectors do not necessarily mean fewer storage bytes."
         )
         with gr.Row():
             text = gr.Textbox(label="Original text", lines=9, placeholder="Enter a paragraph…")
             output = gr.Textbox(label="Reconstruction", lines=9, interactive=False)
-        button = gr.Button("Compress and reconstruct", variant="primary")
+        button = gr.Button(
+            "Compress and reconstruct", variant="primary", interactive=bool(selected)
+        )
         status = gr.Textbox(label="Recovery", interactive=False)
         with gr.Row():
             stats = gr.JSON(label="Positions and storage measurements")
@@ -62,11 +195,37 @@ def build_app(config):
             ],
             inputs=text,
         )
+        selection_outputs = [details, output, status, stats, differences, button]
+        model.change(
+            models.select,
+            inputs=model,
+            outputs=selection_outputs,
+            concurrency_id="inference",
+            concurrency_limit=1,
+            api_name=False,
+        )
+        refresh.click(
+            models.refresh,
+            inputs=model,
+            outputs=[model, *selection_outputs],
+            concurrency_id="inference",
+            concurrency_limit=1,
+            api_name=False,
+        )
+        demo.load(
+            models.select,
+            inputs=model,
+            outputs=selection_outputs,
+            concurrency_id="inference",
+            concurrency_limit=1,
+            api_name=False,
+        )
         button.click(
-            lambda value: compare(codec, value, config.get("max_characters", 16000)),
-            inputs=text,
+            models.reconstruct,
+            inputs=[text, model],
             outputs=[output, status, stats, differences],
             api_name="reconstruct",
+            concurrency_id="inference",
             concurrency_limit=1,
         )
     return demo

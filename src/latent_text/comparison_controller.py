@@ -9,7 +9,16 @@ from pathlib import Path
 
 from filelock import Timeout
 
-from .durable import OwnedLock, atomic_json, journal, locked, read_json, sha256, verified_load
+from .durable import (
+    OwnedLock,
+    atomic_json,
+    journal,
+    locked,
+    read_json,
+    run_folder,
+    sha256,
+    verified_load,
+)
 
 CONTROL = Path("artifacts/comparison/controller")
 
@@ -85,9 +94,9 @@ def launch(frozen_path, resume=False):
             for name, state in models.items():
                 if (
                     state["state"] == "queued"
-                    and (Path(protocol["config"]["output_dir"]) / name / "PAUSE").exists()
+                    and (run_folder(protocol["config"], name) / "PAUSE").exists()
                 ):
-                    (Path(protocol["config"]["output_dir"]) / name / "PAUSE").unlink()
+                    (run_folder(protocol["config"], name) / "PAUSE").unlink()
         else:
             if resume:
                 models = {
@@ -132,10 +141,10 @@ def required_mib(protocol, name):
 def status(output):
     output = Path(output)
     protocol = read_json(output / "frozen.json") if (output / "frozen.json").exists() else None
-    names = protocol["config"]["models"] if protocol else ("A", "B", "C")
+    names = protocol["config"]["models"] if protocol else ()
     result = {"models": {}, "gpu": gpu_memory()}
     for name in names:
-        folder = output / name
+        folder = run_folder(protocol["config"], name)
         value = (
             read_json(folder / "status.json")
             if (folder / "status.json").exists()
@@ -150,7 +159,7 @@ def comparison_summary(protocol):
     root = Path(protocol["config"]["output_dir"])
     reports, fingerprints = {}, {}
     for name in protocol["config"]["models"]:
-        folder = root / name
+        folder = run_folder(protocol["config"], name)
         if not (folder / "final-verification.json").exists():
             return
         pointer = read_json(folder / "last.json")
@@ -210,7 +219,7 @@ def _controller():
             c = protocol["config"]
             for name, entry in request["models"].items():
                 key = (str(path), name)
-                folder = Path(c["output_dir"]) / name
+                folder = run_folder(c, name)
                 if entry["state"] in ("starting", "running"):
                     child = children.get(key)
                     alive = (
@@ -272,7 +281,7 @@ def _controller():
                     },
                 )
                 continue
-            folder = Path(protocol["config"]["output_dir"]) / name
+            folder = run_folder(protocol["config"], name)
             folder.mkdir(parents=True, exist_ok=True)
             if locked(folder / "worker.lock"):
                 request["models"][name].update(

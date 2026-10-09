@@ -13,7 +13,8 @@ import torch
 from latent_text.comparison import accumulated_update, lr_at
 from latent_text.comparison_data import SharedSampler, difficulty_weights, packed_rows
 from latent_text.durable import locked, publish_checkpoint, recover, verified_load
-from latent_text.model import Config, Model, rotary
+from latent_text.model import Attention
+from latent_text.residual import Config, Model
 
 
 @pytest.fixture(autouse=True)
@@ -41,14 +42,14 @@ def tiny():
         decoder_layers=1,
         max_tokens=16,
         span=4,
-        positional="rope",
-        residual_scale_reference_layers=4,
+        position_encoding="rope_v1",
     )
 
 
 def test_rope_norm_padding_and_expected_counts():
     x = torch.randn(2, 4, 16, 8)
-    torch.testing.assert_close(rotary(x).square().sum(-1), x.square().sum(-1), rtol=1e-6, atol=2e-6)
+    rotated = Attention(Config(width=32, heads=4, max_tokens=16, span=4)).rotate(x)
+    torch.testing.assert_close(rotated.square().sum(-1), x.square().sum(-1), rtol=1e-6, atol=2e-6)
     model = Model(tiny())
     tokens = torch.tensor([[3, 4, 5, 6, 7]])
     z, n = model.encode(tokens, tokens.ne(0))
@@ -56,8 +57,8 @@ def test_rope_norm_padding_and_expected_counts():
     zp, npad = model.encode(padded, torch.arange(8)[None] < 5)
     torch.testing.assert_close(z, zp, atol=1e-6, rtol=1e-5)
     torch.testing.assert_close(n, npad)
-    assert model.position is None
-    configs = [(4, 1, 512, 64, 14683136), (6, 1, 512, 64, 16781312), (8, 2, 1024, 128, 28317184)]
+    assert not hasattr(model, "position")
+    configs = [(4, 1, 512, 64, 10456576), (6, 1, 512, 64, 12555776), (8, 2, 1024, 128, 19800064)]
     for enc, dec, context, span, expected in configs:
         model = Model(
             Config(
@@ -65,8 +66,7 @@ def test_rope_norm_padding_and_expected_counts():
                 decoder_layers=dec,
                 max_tokens=context,
                 span=span,
-                positional="rope",
-                residual_scale_reference_layers=4,
+                position_encoding="rope_v1",
             )
         )
         assert sum(p.numel() for p in model.parameters()) == expected
@@ -76,10 +76,10 @@ def F_pad(*args, **kwargs):
     return torch.nn.functional.pad(*args, **kwargs)
 
 
-def test_shared_initialization_and_token_normalized_accumulation():
+def test_repeatable_initialization_and_token_normalized_accumulation():
     c = tiny()
     a = Model(c)
-    b = Model(Config(**(asdict(c) | {"encoder_layers": 2})))
+    b = Model(Config(**asdict(c)))
     for key, value in a.state_dict().items():
         torch.testing.assert_close(value, b.state_dict()[key], rtol=0, atol=0)
     b = Model(c)

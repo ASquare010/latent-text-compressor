@@ -1,25 +1,35 @@
 # Fresh RoPE comparison protocol
 
 This protocol replaces no historical result. Historical 999/1000 and 1000/1000
-scores used inherited weights/curricula (and older FFNs), and are not baselines.
+scores used inherited weights/curricula, and are not baselines.
 One initialization seed is a screening experiment, not evidence of general superiority.
+
+The table describes three example CLI invocations, not built-in model presets.
+Each invocation supplies encoder, decoder, context, span and name explicitly.
+`config/comparison.json` contains shared training/data settings only; the resolved
+per-run configuration is saved in `artifacts/training/<name>/frozen.json`.
 
 | Model | Encoder / decoder | Context | Tokens/vector | Full input memory | Parameters |
 | --- | --- | ---: | ---: | --- | ---: |
-| A | 4 / 1 | 512 | 64 | 8 x 256 | 14,683,136 |
-| B | 6 / 1 | 512 | 64 | 8 x 256 | 16,781,312 |
-| C | 8 / 2 | 1024 | 128 | 8 x 256 | 28,317,184 |
+| A | 4 / 1 | 512 | 64 | 8 x 256 | 10,456,576 |
+| B | 6 / 1 | 512 | 64 | 8 x 256 | 12,555,776 |
+| C | 8 / 2 | 1024 | 128 | 8 x 256 | 19,800,064 |
 
-The requested approximate A/B budgets do not match the existing architecture.
-Each Branch Sigmoid block has 1,049,088 parameters. The two un-factorized span
-maps alone cost 8,388,608 parameters for A/B and 16,777,216 for C. We preserve
-those maps, width 256, four heads, 4,096 vocabulary, tied output embedding, and
-the existing 1,534-feature/four-gate FFN. RoPE rotates query/key pairs in every
-encoder and decoder attention block, base 10,000; no learned position table.
-Plain residual attention means x + Attention(RMSNorm(x)), not residual logits.
-Shared parameters use name-keyed seed 17 initialization. The FFN residual scale
-reference is fixed at four layers for all models, avoiding a depth-dependent
-initialization change between A and B. No encoder-to-decoder bypass exists.
+Use the latest pulled `residual.Model` unchanged: plain depth-route residual
+attention across previous encoder sublayer outputs, factorized packing with
+125 code features, width 256, four heads, 4,096 vocabulary, tied output
+embedding, and the existing 1,534-feature/four-gate Branch Sigmoid FFN. RoPE
+rotates query/key pairs in every encoder and decoder attention block, base
+10,000; no learned position table. The pair of factorized maps costs 4,160,000
+parameters for A/B and 8,256,000 for C. Each transformer block adds 1,049,088
+parameters; depth queries add 512 parameters per encoder layer.
+
+Call the existing model constructor with seed 17, without changing model code
+or loading any weights. Its built-in map seeds 481/482 and FFN calibration seed
+9127 remain unchanged. Its FFN initialization scale depends on encoder depth,
+and sequential initialization means shared-shaped tensors need not be identical
+between A/B. These are existing initialization tradeoffs, disclosed rather than
+silently changing the selected model. No encoder-to-decoder bypass exists.
 
 A/B isolate encoder depth/capacity; C changes context, ratio and depth together.
 C is a separate scaling experiment, not a controlled architecture win.
@@ -27,7 +37,9 @@ C is a separate scaling experiment, not a controlled architecture win.
 ## Frozen training and sampling specification
 
 - Exactly 50,000 fresh AdamW updates per model; effective batch 32 sequences.
-  Probe microbatch 2, then 1 only if necessary; accumulation = 32 / microbatch.
+  The simple CLI defaults to microbatch 32 and one accumulation step. An explicit
+  `--microbatch` divisor of 32 sets accumulation = 32 / microbatch; no automatic
+  batch reduction or probe updates occur in this path.
   BF16 activations, FP32 model/optimizer and cross entropy, no dropout, no margin
   objective. Sum nonpadding-token losses across the entire accumulated batch,
   divide by its total actual tokens, then clip global gradient norm to 1.
@@ -69,17 +81,18 @@ C is a separate scaling experiment, not a controlled architecture win.
 
 ## Execution, durability and evaluation
 
-One GPU controller admits separate processes using measured peak reserved VRAM,
-512 MiB per-process allowance, 20% measurement margin and 1,536 MiB free
-headroom. Measure full-length backward/AdamW and evaluation at microbatch size.
-All model/context/effective-batch settings remain fixed if workers must queue.
-One OS-owned controller lock and one OS-owned lock per model prevent duplicates;
-locks release on process death. No unrelated process is stopped. Failure is
-recorded and not automatically retried. Explicit resume is required.
+Workers retain process-local CPU pinning (logical CPU 0 in the shared config)
+and one CPU thread each. The simple CLI launches one worker per command, without
+resource probes or automatic GPU admission/queuing. Concurrent commands must fit
+the available VRAM; an out-of-memory failure is recorded without reducing the
+requested model, context or batch. Run commands sequentially if they do not fit.
+An OS-owned launch lock outside each replaceable output folder and a worker lock
+prevent duplicate runs with the same name. No unrelated process is stopped.
+Failure is recorded and not automatically retried.
 
 Freeze config, data manifests, environment, source snapshot and resource results
-before launch. Probe updates use fresh disposable models and are recorded
-separately; no probe weights or optimizer states enter training. Checkpoints
+before launch. Direct CLI runs record the requested microbatch and actual model
+parameter count, not a measured pre-launch memory estimate. Checkpoints
 include the entire history, model, optimizer, schedule, sampler, tokenizer,
 configuration, manifest hashes and CPU/CUDA/Python/NumPy RNG state. Flush/fsync,
 reload verification, SHA-256 and atomic publication precede pointer changes.
@@ -100,8 +113,11 @@ untouched test split for selected best. No final quality claim before completion
 Resume reads verified checkpoint metadata rather than status.json. Evidence
 after its completed update is retained as discarded/repeated work; intent logs
 also expose a possibly interrupted in-flight update. Never silently initialize
-a run that already has artifacts. Native/data-integrity failures require review;
-an explicit resume acknowledges that review, and no automatic retry occurs.
+a run from old weights without `--resume`. A fresh invocation with the same name
+archives the entire previous folder under `artifacts/training-history/` before
+creating a new source snapshot, run identity, random model and optimizer. Active
+workers cannot be replaced. Native/data-integrity failures require review; an
+explicit resume acknowledges that review, and no automatic retry occurs.
 
 References: [RoPE paper](https://arxiv.org/abs/2104.09864) and
 [pinned FineWeb-Edu card](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/blob/87f09149ef4734204d70ed1d046ddc9ca3f2b8f9/README.md).

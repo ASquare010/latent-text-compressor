@@ -45,6 +45,11 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def run_folder(config, name):
+    root = Path(config["output_dir"])
+    return root if config.get("flat_output") else root / name
+
+
 def journal(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,13 +70,14 @@ def locked(path):
 
 
 class OwnedLock:
-    def __init__(self, path):
+    def __init__(self, path, timeout=0):
         self.path = Path(path)
         self.lock = FileLock(str(path))
+        self.timeout = timeout
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.lock.acquire(timeout=0)
+        self.lock.acquire(timeout=self.timeout)
         atomic_json(
             self.path.with_suffix(".owner.json"),
             {"pid": os.getpid(), "started_unix": time.time(), "lock": str(self.path.resolve())},

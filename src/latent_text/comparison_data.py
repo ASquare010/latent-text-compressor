@@ -144,10 +144,28 @@ class RowStore:
         }
 
 
+def ensure_training_data(config, *, allow_prepare=True):
+    """Prepare absent data for a new run; never rebuild damaged or resumed data."""
+    folder = Path(config["data_dir"])
+    if (folder / "manifest.json").exists():
+        return verify_data(folder)
+    if not allow_prepare:
+        raise FileNotFoundError(
+            f"Saved run's dataset is missing: {folder.resolve() / 'manifest.json'}. "
+            "Restore its original dataset before resuming; it will not be regenerated."
+        )
+    print(
+        f"Preparing shared dataset in {folder.resolve()}. "
+        "The first run downloads source text and prepares it; parallel runs wait and reuse it.",
+        flush=True,
+    )
+    return prepare_comparison(config)
+
+
 def prepare_comparison(config):
     folder = Path(config["data_dir"])
     folder.mkdir(parents=True, exist_ok=True)
-    with OwnedLock(folder / "preparation.lock"):
+    with OwnedLock(folder / "preparation.lock", timeout=-1):
         manifest_path = folder / "manifest.json"
         data_recipe = {
             k: config[k] for k in ("dataset", "sampling", "packing_seed", "synthetic_seed")

@@ -1,14 +1,12 @@
 {
-  "name": "fresh-rope-abc-seed17",
   "data_dir": "artifacts/data/comparison-v1",
-  "output_dir": "artifacts/comparison/fresh-rope-abc-seed17",
   "updates": 50000,
   "seed": 17,
   "sampling_seed": 1701,
   "packing_seed": 1702,
   "synthetic_seed": 1703,
   "effective_batch": 32,
-  "microbatch_candidates": [2, 1],
+  "microbatch_candidates": [32],
   "warmup_updates": 1000,
   "learning_rate": 0.0003,
   "minimum_lr": 0.00001,
@@ -17,7 +15,8 @@
   "adam_eps": 1e-8,
   "clip": 1.0,
   "precision": "bf16",
-  "threads": 2,
+  "threads": 1,
+  "cpu_affinity": 0,
   "checkpoint_every": 250,
   "milestone_every": 5000,
   "evaluate_every": 1000,
@@ -31,14 +30,10 @@
     "heads": 4,
     "hidden": 1024,
     "ffn": "branch_sigmoid_v1",
-    "positional": "rope",
+    "position_encoding": "rope_v1",
     "rope_base": 10000.0,
-    "residual_scale_reference_layers": 4
-  },
-  "models": {
-    "A": {"encoder_layers": 4, "decoder_layers": 1, "max_tokens": 512, "span": 64},
-    "B": {"encoder_layers": 6, "decoder_layers": 1, "max_tokens": 512, "span": 64},
-    "C": {"encoder_layers": 8, "decoder_layers": 2, "max_tokens": 1024, "span": 128}
+    "variant": "depth_route",
+    "code_features": 125
   },
   "dataset": {
     "repo": "HuggingFaceFW/fineweb-edu",

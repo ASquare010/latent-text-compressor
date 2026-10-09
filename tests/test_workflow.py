@@ -146,8 +146,13 @@ def test_training_resume_and_stage_transfer(tmp_path, monkeypatch):
         train(changed, resume=resumed_path)
 
 
-def test_missing_checkpoint_is_actionable():
+def test_missing_checkpoint_shows_empty_model_picker(tmp_path):
     from latent_text.app import build_app
 
-    with pytest.raises(FileNotFoundError, match="No weights are downloaded"):
-        build_app({"checkpoint": "nonexistent-model.pt"})
+    demo = build_app({"checkpoint": "nonexistent-model.pt", "models_dir": str(tmp_path)})
+    try:
+        components = demo.get_config_file()["components"]
+        assert any(c["type"] == "dropdown" and not c["props"]["choices"] for c in components)
+        assert any("No saved models yet" in str(c["props"].get("value", "")) for c in components)
+    finally:
+        demo.close()
