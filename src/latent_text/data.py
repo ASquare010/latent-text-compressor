@@ -113,6 +113,7 @@ def prepare(
                             "document_id": doc_id,
                             "paragraph_id": key,
                             "source_id": None if isinstance(item, str) else item.get("id"),
+                            "source_url": None if isinstance(item, str) else item.get("url"),
                             "offset": match.start(),
                         }
                     )
