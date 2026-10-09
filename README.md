@@ -1,3 +1,28 @@
+## Default pretrained model
+
+The app and CLI inference now load [the selected 64-token/vector model](https://huggingface.co/awaisamin010/latent-text-compressor-64)
+automatically. The first use downloads about 50 MB; subsequent uses reuse the cache.
+Public downloads do not require an HF token. We pin the release commit and verify
+its SHA-256 before loading. Install the project's CUDA or CPU extra first.
+
+```python
+from latent_text.codec import Codec
+codec = Codec.load()
+result = codec.reconstruct("Your text here.")
+```
+
+```powershell
+.\.venv\Scripts\python.exe -m latent_text.cli infer --text "Your text here."
+.\.venv\Scripts\python.exe -m latent_text.cli app
+```
+
+Selected step 31,000: 12,555,776 parameters, 6 encoder / 1 decoder layers,
+512-token context, Branch Sigmoid, RoPE and depth residual attention.
+Saved validation: 1,000/1,000 short and 384/384 packed exact reconstruction.
+This is selected validation performance, not guaranteed lossless reconstruction
+of unseen text or a 64x byte-compression ratio. Explicit local `--checkpoint`
+paths remain supported. Training and resume settings are unchanged.
+
 # Latent Text Compressor
 
 The selected model uses plain residual depth attention, Branch Sigmoid FFNs,

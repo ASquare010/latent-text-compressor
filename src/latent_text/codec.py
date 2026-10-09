@@ -20,6 +20,11 @@ from .model import Config, Model
 from .runtime import artifact_path, choose_device, digest, precision_for
 
 
+DEFAULT_HF_REPO = 'awaisamin010/latent-text-compressor-64'
+DEFAULT_HF_REVISION = 'fced6bd27cb3934896b4178f4792543832d9ab57'
+DEFAULT_HF_SHA256 = 'abc271f5d1de3f8168ed07a5c0351e71def86c849745791d230f0b02efad91f6'
+
+
 def require_branch_config(config):
     if config.get("position_encoding") != "rope_v1" and config.get("ffn") == "branch_sigmoid_v1":
         raise ValueError("Non-RoPE checkpoint is incompatible; train the new RoPE compressor")
@@ -91,8 +96,16 @@ class Codec:
         self.tokenizer_id = hash_text(tokenizer.to_str())
 
     @classmethod
-    def load(cls, checkpoint, device="auto", precision=None):
-        # Use only locally generated/trusted training checkpoints.
+    def load(cls, checkpoint=None, device="auto", precision=None):
+        # Public inference default: pinned revision, checksum and restricted loading.
+        if checkpoint is None or str(checkpoint) == "hf-default":
+            from huggingface_hub import hf_hub_download
+
+            checkpoint = hf_hub_download(
+                repo_id=DEFAULT_HF_REPO, filename="model.pt", revision=DEFAULT_HF_REVISION,
+            )
+            if digest(checkpoint) != DEFAULT_HF_SHA256:
+                raise ValueError("Default model checksum mismatch")
         device = choose_device(device)
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
         require_branch_config(state["protocol"]["model"])

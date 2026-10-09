@@ -50,7 +50,7 @@ def build_parser():
     fit.add_argument("--resume", action="store_true", help="Resume this run's verified checkpoint")
     fit.add_argument("--inspect", action="store_true", help="Print settings without training")
     infer = commands.add_parser("infer", help="Reconstruct text or a saved latent file")
-    infer.add_argument("--checkpoint", required=True)
+    infer.add_argument("--checkpoint", default="hf-default", help="Local checkpoint; defaults to the published Hugging Face model")
     infer.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
     group = text_arguments(infer)
     group.add_argument("--from-memory", help="Decode saved vectors without source text")

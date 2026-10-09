@@ -1,5 +1,5 @@
 {
-  "checkpoint": "artifacts\\runs\\residual64-fresh10m-60000-s47-recovery-v3\\continue_plain\\best.pt",
+  "checkpoint": "hf-default",
   "models_dir": "artifacts/training",
   "device": "auto",
   "host": "127.0.0.1",

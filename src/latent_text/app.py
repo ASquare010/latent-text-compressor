@@ -15,6 +15,8 @@ def discover_models(config):
     """List configured weights and published run pointers; never arbitrary visitor paths."""
     choices = {}
     configured = config.get("checkpoint")
+    if configured == "hf-default":
+        choices["hf-default"] = ("Default · 64 tokens/vector · step 31,000", Path("hf-default"))
     if configured and Path(configured).is_file():
         path = Path(configured).resolve()
         choices[str(path)] = ("Configured model", path)
@@ -29,13 +31,13 @@ def discover_models(config):
             run_label = (
                 folder.name
                 if folder.parent == root
-                else f"Model {folder.name} · {folder.parent.name}"
+                else f"Model {folder.name} Â· {folder.parent.name}"
             )
-            label = f"{run_label} · {'Best' if which == 'best' else 'Latest'}"
+            label = f"{run_label} Â· {'Best' if which == 'best' else 'Latest'}"
             try:
                 step = read_json(pointer).get("step")
                 if isinstance(step, int):
-                    label += f" · update {step:,}"
+                    label += f" Â· update {step:,}"
             except (OSError, ValueError):
                 # Keep the choice visible; loading will report damaged metadata.
                 pass
@@ -76,7 +78,12 @@ class InferenceModels:
             )
         _, source = self.choices[selected]
         try:
-            if source.suffix == ".json":
+            if str(source) == "hf-default":
+                key = ("hf-default",)
+                if key == self.cache_key:
+                    return self.codec
+                path = "hf-default"
+            elif source.suffix == ".json":
                 # The pointer changes as training progresses. Include its checksum
                 # in the cache key so Latest never silently serves stale weights.
                 reference = read_json(source)
@@ -106,9 +113,9 @@ class InferenceModels:
                 codec = self.load(selected)
                 c = codec.model.config
                 message = (
-                    f"**{c.encoder_layers} encoder / {c.decoder_layers} decoder layers** · "
-                    f"**{c.max_tokens}-token context** · **{c.span} tokens per vector** · "
-                    f"{c.width} features per vector · {codec.device.upper()}"
+                    f"**{c.encoder_layers} encoder / {c.decoder_layers} decoder layers** Â· "
+                    f"**{c.max_tokens}-token context** Â· **{c.span} tokens per vector** Â· "
+                    f"{c.width} features per vector Â· {codec.device.upper()}"
                 )
             # Clear previous results so they cannot be mistaken for this model's output.
             return message, "", "", None, "", gr.Button(interactive=bool(selected))
@@ -177,7 +184,7 @@ def build_app(config):
             "Fewer vectors do not necessarily mean fewer storage bytes."
         )
         with gr.Row():
-            text = gr.Textbox(label="Original text", lines=9, placeholder="Enter a paragraph…")
+            text = gr.Textbox(label="Original text", lines=9, placeholder="Enter a paragraphâ€¦")
             output = gr.Textbox(label="Reconstruction", lines=9, interactive=False)
         button = gr.Button(
             "Compress and reconstruct", variant="primary", interactive=bool(selected)
@@ -190,7 +197,7 @@ def build_app(config):
             [
                 ["Invoice 17019: 17.09, not 19.07."],
                 ["The car is not ready. Do not ship it."],
-                ["Hello! Bonjour! مرحبا! 你好! 🙂"],
+                ["Hello! Bonjour! Ù…Ø±Ø­Ø¨Ø§! ä½ å¥½! ðŸ™‚"],
                 ["First line.\n\tIndented second line.  "],
             ],
             inputs=text,
