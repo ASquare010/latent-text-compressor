@@ -1,3 +1,19 @@
+# Standalone training setup repair (2026-10-08)
+
+User explicitly requested fixing missing packages and blocked fresh6encoder training.
+Confirmed plain uv sync omitted optional torch. Restored exact locked CUDA extra
+using uv sync --locked --extra cuda:torch2.14.0+cu132. CUDA detected RTX4070Laptop;
+uv pip check passed101 installed packages. No unrelated training was active.
+Incomplete comparison-v1 contains base/source.json only,no manifest;preparation
+owner9476 dead. Retained unchanged. Fresh config now uses comparison-v2. No resumed
+dataset substituted. Updated runtime missing-torch guidance and README setup.
+Prior native/runtime failures remain unresolved. Process CPU16 and thread1/tokenizer
+parallelism disabled reuse previously tested mitigation,not a proven root-cause fix.
+One user-requested6encoder/1decoder,ctx512/span64,12555776params,50000updates,
+micro32xaccum1 retry launched19108. Launcher reported preparation only;first optimizer
+update not yet verified. Log standalone artifacts/setup-repair-v1/launch.log.
+No automatic failure retry or extra model budget. Do not duplicate this named run.
+
 # Fresh60k second PC-crash recovery TRAINING (2026-10-08)
 
 User again reported PC crash and explicitly requested continuing. No prior workers

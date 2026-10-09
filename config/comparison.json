@@ -1,22 +1,27 @@
 {
-  "data_dir": "artifacts/data/comparison-v1",
+  "data_dir": "artifacts/data/comparison-v2",
   "updates": 50000,
   "seed": 17,
   "sampling_seed": 1701,
   "packing_seed": 1702,
   "synthetic_seed": 1703,
   "effective_batch": 32,
-  "microbatch_candidates": [32],
+  "microbatch_candidates": [
+    32
+  ],
   "warmup_updates": 1000,
   "learning_rate": 0.0003,
-  "minimum_lr": 0.00001,
+  "minimum_lr": 1e-05,
   "weight_decay": 0.01,
-  "betas": [0.9, 0.999],
-  "adam_eps": 1e-8,
+  "betas": [
+    0.9,
+    0.999
+  ],
+  "adam_eps": 1e-08,
   "clip": 1.0,
   "precision": "bf16",
   "threads": 1,
-  "cpu_affinity": 0,
+  "cpu_affinity": 16,
   "checkpoint_every": 250,
   "milestone_every": 5000,
   "evaluate_every": 1000,
@@ -39,20 +44,34 @@
     "repo": "HuggingFaceFW/fineweb-edu",
     "subset": "sample-10BT",
     "revision": "87f09149ef4734204d70ed1d046ddc9ca3f2b8f9",
-    "counts": {"train": 50000, "valid": 2000, "test": 2000},
+    "counts": {
+      "train": 50000,
+      "valid": 2000,
+      "test": 2000
+    },
     "min_tokens": 32,
     "max_tokens": 1024,
     "max_documents": 500000,
     "vocab_size": 4096
   },
   "sampling": {
-    "cycle_counts": {"natural_short": 128, "natural_packed": 128, "patterns": 32, "random": 32},
+    "cycle_counts": {
+      "natural_short": 128,
+      "natural_packed": 128,
+      "patterns": 32,
+      "random": 32
+    },
     "uniform_component": 0.75,
     "difficulty_weight_min": 0.5,
     "difficulty_weight_max": 2.0,
     "score": "fixed training-only add-one unigram mean surprisal; within-source/length midrank",
     "score_updates": "once before freeze; never adapted to any model or held-out errors",
-    "length_boundaries": [128, 256, 512, 1024],
+    "length_boundaries": [
+      128,
+      256,
+      512,
+      1024
+    ],
     "synthetic_rows_per_source": 4096,
     "shared_short_eval_count": 1000,
     "packed_eval_count": 1000

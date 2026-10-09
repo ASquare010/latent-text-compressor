@@ -4,7 +4,17 @@ import hashlib
 import json
 from pathlib import Path
 
-import torch
+try:
+    import torch
+except ModuleNotFoundError as exc:
+    if exc.name != "torch":
+        raise
+    raise SystemExit(
+        "PyTorch is missing from this environment. From the repository folder run "
+        "`uv sync --locked --extra cuda` for NVIDIA training, or "
+        "`uv sync --locked --extra cpu` for CPU use. Plain `uv sync` omits "
+        "these optional extras and can remove PyTorch."
+    ) from None
 
 
 def digest(path):

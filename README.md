@@ -6,7 +6,15 @@ unchanged. Training and inference share [one CLI](src/latent_text/cli.py).
 
 ## Train
 
-Run from the repository folder. Use a separate terminal for each model:
+Run from the repository folder. Install the NVIDIA extra before training:
+
+```powershell
+uv sync --locked --extra cuda
+```
+
+Plain `uv sync` omits the optional CUDA/CPU extras and can remove PyTorch.
+After installation use the `.venv` commands below or `uv run --no-sync`.
+Use a separate terminal for each model:
 
 ```powershell
 .\.venv\Scripts\python.exe -m latent_text.cli train --encoder 4 --decoder 1 --context 512 --span 64 --steps 50000 --name 4enc-512-ctx-64-comp-50000-steps
