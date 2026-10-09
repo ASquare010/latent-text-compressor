@@ -84,10 +84,14 @@ backups are retained every 5,000 updates. See the [training protocol](docs/fresh
 .\.venv\Scripts\python.exe -m latent_text.cli app
 ```
 
-The app's **Inference model** dropdown finds saved named runs under
-`artifacts/training`, with separate **Best** and **Latest** choices. Click
-**Refresh models** to discover new checkpoints. It also offers the checkpoint
-in `config/app.json` when that file exists. No weights are downloaded.
+The app's **Inference model** dropdown includes the published **Hugging Face**
+model and saved named runs under `artifacts/training`, with separate **Best** and
+**Latest** choices. The source panel identifies downloaded Hugging Face weights
+and links to their model page; local checkpoints are labeled separately. Click
+**Refresh models** to discover new checkpoints. Results show readable token,
+vector and recovery summaries; raw measurements and character differences are
+under **Details & exact differences**. Hugging Face weights are cached after
+the first download, and inference runs locally.
 Historical 999/1000 and 1000/1000 scores involved inherited weights/curriculum;
 they are not fresh-training baselines. Historical evidence remains in
 [results](docs/residual64_long.md) and [handoff notes](docs/selected_handoff.md).

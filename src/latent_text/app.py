@@ -7,7 +7,8 @@ from threading import RLock
 
 import gradio as gr
 
-from .codec import Codec
+from .app_ui import APP_CSS, HEADER, HTML_CSS, model_details, result_summary, theme
+from .codec import DEFAULT_HF_REPO, Codec
 from .durable import read_json, resolve_checkpoint
 
 
@@ -16,7 +17,10 @@ def discover_models(config):
     choices = {}
     configured = config.get("checkpoint")
     if configured == "hf-default":
-        choices["hf-default"] = ("Default · 64 tokens/vector · step 31,000", Path("hf-default"))
+        choices["hf-default"] = (
+            "Hugging Face \u00b7 64 tokens/vector \u00b7 step 31,000",
+            Path("hf-default"),
+        )
     if configured and Path(configured).is_file():
         path = Path(configured).resolve()
         choices[str(path)] = ("Configured model", path)
@@ -31,13 +35,13 @@ def discover_models(config):
             run_label = (
                 folder.name
                 if folder.parent == root
-                else f"Model {folder.name} Â· {folder.parent.name}"
+                else f"Model {folder.name} \u00b7 {folder.parent.name}"
             )
-            label = f"{run_label} Â· {'Best' if which == 'best' else 'Latest'}"
+            label = f"{run_label} \u00b7 {'Best' if which == 'best' else 'Latest'}"
             try:
                 step = read_json(pointer).get("step")
                 if isinstance(step, int):
-                    label += f" Â· update {step:,}"
+                    label += f" \u00b7 update {step:,}"
             except (OSError, ValueError):
                 # Keep the choice visible; loading will report damaged metadata.
                 pass
@@ -108,17 +112,12 @@ class InferenceModels:
         with self.lock:
             if not selected:
                 self.release()
-                message = "No saved models yet. Train a model, then click **Refresh models**."
+                message = '<p class="loading">No saved models yet. Train a model, then click Refresh models.</p>'
             else:
                 codec = self.load(selected)
-                c = codec.model.config
-                message = (
-                    f"**{c.encoder_layers} encoder / {c.decoder_layers} decoder layers** Â· "
-                    f"**{c.max_tokens}-token context** Â· **{c.span} tokens per vector** Â· "
-                    f"{c.width} features per vector Â· {codec.device.upper()}"
-                )
+                message = model_details(codec, selected == "hf-default", DEFAULT_HF_REPO)
             # Clear previous results so they cannot be mistaken for this model's output.
-            return message, "", "", None, "", gr.Button(interactive=bool(selected))
+            return message, "", result_summary(), None, "", gr.Button(interactive=bool(selected))
 
     def refresh(self, selected):
         with self.lock:
@@ -157,50 +156,94 @@ def compare(codec, text, limit):
 def build_app(config):
     models = InferenceModels(config)
     selected = next(iter(models.choices), None)
+
+    def reconstruct_view(text, selected):
+        output, _, stats, differences = models.reconstruct(text, selected)
+        return output, result_summary(stats), stats, differences
+
+    def clear_view():
+        return "", "", result_summary(), None, ""
+
     with gr.Blocks(title="Latent Text Compressor", analytics_enabled=False) as demo:
-        gr.Markdown(
-            "# Latent Text Compressor\n"
-            "Turn text into fewer learned memory vectors, then reconstruct every position "
-            "in parallel. Try names, numbers, negation and whitespace."
-        )
-        with gr.Row():
-            model = gr.Dropdown(
-                choices=models.options(),
-                value=selected,
-                label="Inference model",
-                info="Choose a saved model and checkpoint.",
-                allow_custom_value=False,
-                interactive=True,
-                scale=4,
+        gr.HTML(HEADER, css_template=HTML_CSS)
+        with gr.Column(elem_id="model-panel", min_width=0):
+            with gr.Row(elem_id="model-row"):
+                model = gr.Dropdown(
+                    choices=models.options(),
+                    value=selected,
+                    label="Inference model",
+                    info="Choose the Hugging Face model or one of your local training runs.",
+                    allow_custom_value=False,
+                    interactive=True,
+                    scale=5,
+                    elem_id="model-picker",
+                )
+                refresh = gr.Button("Refresh models", scale=0, elem_id="refresh-models")
+            details = gr.HTML(
+                '<p class="loading">Loading the selected model...</p>'
+                if selected
+                else '<p class="loading">No saved models yet. Train a model, then click Refresh models.</p>',
+                css_template=HTML_CSS,
             )
-            refresh = gr.Button("Refresh models", scale=1)
-        details = gr.Markdown(
-            "Select a model to load its saved weights."
-            if selected
-            else "No saved models yet. Train a model, then click **Refresh models**."
-        )
-        gr.Markdown(
-            "Reconstruction can contain mistakes. Long inputs use independent windows. "
-            "Fewer vectors do not necessarily mean fewer storage bytes."
-        )
-        with gr.Row():
-            text = gr.Textbox(label="Original text", lines=9, placeholder="Enter a paragraphâ€¦")
-            output = gr.Textbox(label="Reconstruction", lines=9, interactive=False)
-        button = gr.Button(
-            "Compress and reconstruct", variant="primary", interactive=bool(selected)
-        )
-        status = gr.Textbox(label="Recovery", interactive=False)
-        with gr.Row():
-            stats = gr.JSON(label="Positions and storage measurements")
-            differences = gr.Textbox(label="Exact differences (escaped whitespace)", lines=7)
+        with gr.Row(elem_id="text-panels", equal_height=True):
+            with gr.Column(min_width=280):
+                text = gr.Textbox(
+                    label="Original text",
+                    lines=8,
+                    max_lines=14,
+                    placeholder="Paste your text here, or choose an example below...",
+                    info="Names, numbers, punctuation and whitespace all count.",
+                )
+            with gr.Column(min_width=280):
+                output = gr.Textbox(
+                    label="Reconstruction",
+                    lines=8,
+                    max_lines=14,
+                    interactive=False,
+                    placeholder="Your reconstructed text will appear here.",
+                    info="Decoded from the compressed vectors.",
+                    buttons=["copy"],
+                )
+        with gr.Row(elem_id="action-row"):
+            button = gr.Button(
+                "Compress and reconstruct",
+                variant="primary",
+                interactive=bool(selected),
+                scale=4,
+                elem_id="reconstruct",
+            )
+            clear = gr.Button("Clear text", scale=1, elem_id="clear-text")
         gr.Examples(
             [
                 ["Invoice 17019: 17.09, not 19.07."],
                 ["The car is not ready. Do not ship it."],
-                ["Hello! Bonjour! Ù…Ø±Ø­Ø¨Ø§! ä½ å¥½! ðŸ™‚"],
+                ["Hello! Bonjour! \u0645\u0631\u062d\u0628\u0627! \u4f60\u597d! \U0001f642"],
                 ["First line.\n\tIndented second line.  "],
             ],
             inputs=text,
+            label="Try an example",
+            example_labels=[
+                "Numbers & punctuation",
+                "Meaning & negation",
+                "Multilingual text",
+                "Whitespace",
+            ],
+            elem_id="examples",
+        )
+        status = gr.HTML(result_summary(), css_template=HTML_CSS)
+        with gr.Accordion("Details & exact differences", open=False, elem_id="diagnostics"):
+            with gr.Row():
+                differences = gr.Textbox(
+                    label="Character differences",
+                    lines=5,
+                    interactive=False,
+                    info="Escaped whitespace makes tabs, line breaks and trailing spaces visible.",
+                )
+                stats = gr.JSON(label="Full measurements")
+        gr.Markdown(
+            "Reconstruction can contain mistakes. Long text is split into independent windows. "
+            "Fewer vectors do not necessarily mean fewer storage bytes; vector data excludes metadata.",
+            elem_id="usage-note",
         )
         selection_outputs = [details, output, status, stats, differences, button]
         model.change(
@@ -228,12 +271,19 @@ def build_app(config):
             api_name=False,
         )
         button.click(
-            models.reconstruct,
+            reconstruct_view,
             inputs=[text, model],
             outputs=[output, status, stats, differences],
             api_name="reconstruct",
             concurrency_id="inference",
             concurrency_limit=1,
+        )
+        clear.click(
+            clear_view,
+            outputs=[text, output, status, stats, differences],
+            concurrency_id="inference",
+            concurrency_limit=1,
+            api_name=False,
         )
     return demo
 
@@ -245,4 +295,7 @@ def launch(config):
         server_port=config.get("port", 7860),
         share=False,
         inbrowser=False,
+        theme=theme(),
+        css=APP_CSS,
+        footer_links=[],
     )

@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from latent_text.app import InferenceModels, build_app, discover_models
+from latent_text.app_ui import result_summary
 from latent_text.codec import Codec
 from latent_text.data import tokenizer_for
 from latent_text.durable import publish_checkpoint
@@ -70,7 +71,7 @@ def test_switching_uses_selected_weights_and_clears_previous_result(saved_models
     c = str((folders["C"][0] / "best.json").resolve())
     selected = models.select(a)
     assert "4 tokens per vector" in selected[0]
-    assert selected[1:5] == ("", "", None, "")
+    assert selected[1:5] == ("", result_summary(), None, "")
     result_a = models.reconstruct("A small saved model.", a)
     assert "Model A" in result_a[2]["model"]
     assert "8 tokens per vector" in models.select(c)[0]
