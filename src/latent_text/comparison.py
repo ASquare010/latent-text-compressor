@@ -46,19 +46,34 @@ from .durable import (
 from .residual import Config, Model
 
 
-def setup(config, name=None):
+def resolve_cpu_affinity(config, name=None):
+    """Resolve the default on this host before data preparation or source freezing."""
     import psutil
 
     name = name or next(iter(config["models"]))
     cpu = (
         config["worker_cpu_affinity"][name]
         if "worker_cpu_affinity" in config
-        else config["cpu_affinity"]
+        else config.get("cpu_affinity")
     )
-    process = psutil.Process()
-    if not 0 <= cpu < psutil.cpu_count(logical=True):
-        raise RuntimeError(f"Configured logical CPU {cpu} is unavailable")
-    process.cpu_affinity([cpu])
+    if cpu is None:
+        available = psutil.Process().cpu_affinity()
+        if not available:
+            raise ValueError("No logical CPUs are available to this process")
+        cpu = min(available)
+    count = psutil.cpu_count(logical=True)
+    if type(cpu) is not int or count is None or not 0 <= cpu < count:
+        raise ValueError(
+            f"Configured logical CPU {cpu} is unavailable ({count} logical CPUs detected). "
+            "Set cpu_affinity to null in config/comparison.json for automatic selection."
+        )
+    return cpu
+
+
+def setup(config, name=None):
+    import psutil
+
+    psutil.Process().cpu_affinity([resolve_cpu_affinity(config, name)])
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.set_num_threads(config["threads"])
     torch.use_deterministic_algorithms(True)

@@ -39,6 +39,9 @@ Only explicitly adding `--resume` continues the same run's verified checkpoint
 and requires matching settings. An active run cannot be replaced.
 Interrupting with Ctrl+C requests a saved pause.
 
+CPU pinning selects an available core automatically (`cpu_affinity: null` in
+`config/comparison.json`). The selected core is printed and saved with the run.
+
 The first fresh run downloads and prepares the shared dataset automatically;
 parallel commands wait and reuse it. A missing or damaged dataset during resume
 must be restored, not silently regenerated. Data and weights are local artifacts,

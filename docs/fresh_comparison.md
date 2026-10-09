@@ -81,8 +81,11 @@ C is a separate scaling experiment, not a controlled architecture win.
 
 ## Execution, durability and evaluation
 
-Workers retain process-local CPU pinning (logical CPU 0 in the shared config)
-and one CPU thread each. The simple CLI launches one worker per command, without
+Workers retain process-local CPU pinning and one CPU thread each. A null
+`cpu_affinity` selects the lowest available core on the current host; the CLI
+resolves and validates it before data preparation and freezes the actual core
+number in the run configuration. Explicit core numbers must exist on the host.
+The simple CLI launches one worker per command, without
 resource probes or automatic GPU admission/queuing. Concurrent commands must fit
 the available VRAM; an out-of-memory failure is recorded without reducing the
 requested model, context or batch. Run commands sequentially if they do not fit.

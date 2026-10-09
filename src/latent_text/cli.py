@@ -207,7 +207,7 @@ def run_training(args):
 
     import torch
 
-    from latent_text.comparison import freeze, validate_config
+    from latent_text.comparison import freeze, resolve_cpu_affinity, validate_config
     from latent_text.comparison_data import ensure_training_data
     from latent_text.durable import OwnedLock, atomic_json, read_json
     from latent_text.residual import Config, Model
@@ -242,6 +242,7 @@ def run_training(args):
         flat_output=True,
         microbatch_candidates=[args.microbatch],
     )
+    recipe["cpu_affinity"] = resolve_cpu_affinity(recipe, name)
     validate_config(recipe)
     torch.set_num_threads(1)
     model = Model(Config(**(recipe["model"] | selected)), seed=recipe["seed"])
@@ -256,6 +257,7 @@ def run_training(args):
     print(
         f"{args.steps:,} updates | microbatch {args.microbatch} x {32 // args.microbatch} accumulation = batch 32"
     )
+    print(f"CPU core {recipe['cpu_affinity']} | CPU threads {recipe['threads']}")
     print(f"Output: {recipe['output_dir']}", flush=True)
     output = Path(recipe["output_dir"])
     folder = output

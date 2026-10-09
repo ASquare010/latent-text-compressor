@@ -78,6 +78,42 @@ def test_no_implicit_architecture_or_model_selector():
     assert not cli.build_parser().parse_args(train_args()).resume
 
 
+def test_cpu_default_uses_an_available_core(monkeypatch):
+    import psutil
+
+    class Process:
+        def cpu_affinity(self):
+            return [4, 6]
+
+    monkeypatch.setattr(psutil, "Process", Process)
+    monkeypatch.setattr(psutil, "cpu_count", lambda logical: 16)
+    recipe = {"models": {"my-run": {}}, "cpu_affinity": None}
+    assert comparison.resolve_cpu_affinity(recipe) == 4
+    assert comparison.resolve_cpu_affinity(recipe | {"cpu_affinity": 15}) == 15
+    with pytest.raises(ValueError, match="CPU 16 is unavailable"):
+        comparison.resolve_cpu_affinity(recipe | {"cpu_affinity": 16})
+
+
+def test_invalid_cpu_fails_before_data_preparation(monkeypatch, capsys):
+    import psutil
+
+    from latent_text import durable
+
+    recipe = read_json(Path(cli.__file__).resolve().parents[2] / "config/comparison.json")
+    monkeypatch.setattr(durable, "read_json", lambda path: recipe | {"cpu_affinity": 16})
+    monkeypatch.setattr(psutil, "cpu_count", lambda logical: 16)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("An unavailable CPU must fail before data preparation or worker launch")
+
+    monkeypatch.setattr(comparison_data, "ensure_training_data", unexpected)
+    monkeypatch.setattr(cli.subprocess, "Popen", unexpected)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(train_args())
+    assert exc.value.code == 2
+    assert "CPU 16 is unavailable" in capsys.readouterr().err
+
+
 def test_same_name_launches_fresh_and_resume_is_explicit(tmp_path, monkeypatch):
     recipe = read_json(Path(cli.__file__).resolve().parents[2] / "config/comparison.json")
     assert "models" not in recipe and "worker_cpu_affinity" not in recipe

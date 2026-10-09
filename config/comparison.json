@@ -21,7 +21,7 @@
   "clip": 1.0,
   "precision": "bf16",
   "threads": 1,
-  "cpu_affinity": 16,
+  "cpu_affinity": null,
   "checkpoint_every": 250,
   "milestone_every": 5000,
   "evaluate_every": 1000,
