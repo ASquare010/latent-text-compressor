@@ -7,7 +7,7 @@ def load_checkpoint(path,device='cpu'):
     import torch
     from growth import Config,Model
     saved=torch.load(path,map_location='cpu',weights_only=True)
-    assert saved['format']=='residual64-continuation-v1'
+    assert saved['format']=='residual64-fresh10m60k-v1'
     model=Model(Config(**saved['config']),saved['seed'])
     model.load_state_dict(saved['model'],strict=True)
     return model.to(device).eval(),saved
@@ -17,7 +17,7 @@ def load_encoder(path,device='cpu'):
     from growth import Config,Model
     from growth import EncoderOnly
     saved=torch.load(path,map_location='cpu',weights_only=True)
-    assert saved['format']=='residual64-continuation-encoder-v1'
+    assert saved['format']=='residual64-fresh10m60k-encoder-v1'
     encoder=EncoderOnly(Model(Config(**saved['config']),saved['seed']))
     encoder.load_state_dict(saved['encoder'],strict=True)
     return encoder.to(device).eval()
@@ -58,27 +58,19 @@ def worker(kind):
             if state.get('failed') or state.get('state')=='failed':raise RuntimeError('Peer initialization failed; no automatic retry')
             if time.monotonic()>deadline:raise TimeoutError('Peer initialization deadline exceeded; no automatic retry')
             time.sleep(1)
-        assert transfer_receipt['initial_logits_and_vectors_exact']
+        assert transfer_receipt['fresh_initialization']
         torch.manual_seed(SEED);torch.cuda.manual_seed_all(SEED)
         model=model.cuda()
         opt=torch.optim.AdamW(model.parameters(),lr=lr(1),weight_decay=.01,fused=True)
-        resume=torch.load(PARENT,map_location='cpu',weights_only=True)
-        opt.load_state_dict(resume['optimizer'])
-        assert all(float(s['step'])==OPT_STEPS for s in opt.state.values())
-        rng=random.Random();rng.setstate(resume['rng'])
-        torch.set_rng_state(resume['torch_rng'])
-        torch.cuda.set_rng_state_all(resume['cuda_rng'])
-        write_json(folder/'resume_receipt.json',dict(optimizer_restored=True,optimizer_steps=OPT_STEPS,
-            sampler_restored=rng.getstate()==resume['rng'],cpu_rng_restored=torch.equal(torch.get_rng_state(),resume['torch_rng']),
-            cuda_rng_restored=all(torch.equal(a,b) for a,b in zip(torch.cuda.get_rng_state_all(),resume['cuda_rng'])),parent_sha256=PARENT_SHA))
-        del resume
+        rng=random.Random(SEED)
+        write_json(folder/'resume_receipt.json',dict(optimizer_restored=False,fresh_initialization=True,optimizer_steps=0))
         pools=[short_splits['train'],splits['train'],packed_data.synthetic(5000,241),packed_data.synthetic(5000,243,True)]
         assert all(0<len(r['ids'])<=512 and min(r['ids'])>=3 and max(r['ids'])<4096 for pool in pools for r in pool)
         short=short_splits['valid']
         tracker=Tracker(folder/'memory.json')
         schedule=hashlib.sha256();history=[];best=None;best_step=None
         def checkpoint(n):
-            return dict(format='residual64-continuation-v1',kind=kind,config=asdict(model.config),seed=SEED,
+            return dict(format='residual64-fresh10m60k-v1',kind=kind,config=asdict(model.config),seed=SEED,
                         protocol=dict(model=asdict(model.config)),model=model.state_dict(),optimizer=opt.state_dict(),step=n,budget=STEPS,inherited_updates=INHERITED,
                         tokenizer=(packed_data.DATA/'tokenizer.json').read_text(encoding='utf-8'),dataset=data,sources=pins(),
                         rng=rng.getstate(),torch_rng=torch.get_rng_state(),cuda_rng=torch.cuda.get_rng_state_all(),
@@ -92,6 +84,7 @@ def worker(kind):
             return result
         # User explicitly requested direct launch: no separate probe or initial full replay.
         write_json(folder/'initial_validation.json',dict(performed=False,waivers=WAIVERS))
+        save_checkpoint(folder/'initial.pt',checkpoint(0))
         tracker.begin()
         for step in range(1,STEPS+1):
             started=time.perf_counter();model.train();opt.zero_grad(set_to_none=True)
@@ -143,7 +136,7 @@ def worker(kind):
         selected_short=measured(short,'best_replay')
         replay(selected_short,next(r['short'] for r in history if r['updates']==best_step))
         encoder=EncoderOnly(model)
-        save_checkpoint(folder/'encoder.pt',dict(format='residual64-continuation-encoder-v1',seed=SEED,
+        save_checkpoint(folder/'encoder.pt',dict(format='residual64-fresh10m60k-encoder-v1',seed=SEED,
              config=asdict(model.config),encoder={n:v.cpu() for n,v in encoder.state_dict().items()},
              tokenizer=(packed_data.DATA/'tokenizer.json').read_text(encoding='utf-8'),sources=pins(),selected_update=best_step,
              decoder_checkpoint_sha256=digest(folder/'best.pt')))
@@ -162,7 +155,7 @@ def worker(kind):
                     waivers=WAIVERS,full_final_replay=True,full_best_replay=True,encoder_parity=True,complete_packed_decoded_identities=True,
                     last_sha256=digest(folder/'last.pt'),best_sha256=digest(folder/'best.pt'),encoder_sha256=digest(folder/'encoder.pt'))
         write_json(folder/'result.json',result)
-        record=ROOT/f'artifacts/records/residual64-continuation-{kind}-v1.json';write_json(record,result)
+        record=ROOT/f'artifacts/records/residual64-fresh10m60k-{kind}-v1.json';write_json(record,result)
         write_json(folder/'audit.json',dict(result_sha256=digest(folder/'result.json'),record_sha256=digest(record),sources=pins()))
         status('complete',best_update=best_step);(folder/'worker.lock.json').unlink()
     except BaseException as exc:
@@ -174,7 +167,7 @@ def finalize():
     results=[]
     for kind in KINDS:
         folder=OUT/kind;result=json.loads((folder/'result.json').read_text());audit=json.loads((folder/'audit.json').read_text())
-        record=ROOT/f'artifacts/records/residual64-continuation-{kind}-v1.json'
+        record=ROOT/f'artifacts/records/residual64-fresh10m60k-{kind}-v1.json'
         assert result==json.loads(record.read_text()) and digest(record)==audit['record_sha256']
         assert digest(folder/'result.json')==audit['result_sha256']
         assert result['sources']==manifest['sources'] and result['dataset']==manifest['dataset']
@@ -193,7 +186,7 @@ def finalize():
     results.sort(key=lambda r:rank(r['best_report']))
     write_json(OUT/'completion.json',dict(state='complete',winner=results[0]['kind'],results=results))
     write_json(OUT/'completion_verification.json',dict(passed=True,candidates=1,updates_each=STEPS,matched_targets=True,
-                same_parent_function_verified=True,all_hashes_verified=True,full_replays=True))
+                fresh_initialization=True,all_hashes_verified=True,full_replays=True))
     write_json(OUT/'status.json',dict(state='complete',finished=list(KINDS),failed=[],winner=results[0]['kind']))
 
 def controller():
@@ -202,14 +195,14 @@ def controller():
     for n,p in source_paths().items():shutil.copyfile(p,OUT/'source'/n)
     write_json(OUT/'status.json',dict(state='preparing_data',pid=os.getpid(),active={},finished=[],failed=[],waivers=WAIVERS))
     # Reuse immutable packed data; every worker independently checks all identities.
-    assert pins()==source_hashes and digest(PARENT)==PARENT_SHA
+    assert pins()==source_hashes
     from packed_data import DATA
     dataset=json.loads((DATA/'manifest.json').read_text(encoding='utf-8'))
     manifest=dict(kinds=KINDS,seed=SEED,updates_each=STEPS,max_workers=1,
                   context=512,width=256,microbatch=MICRO,accumulation=ACCUM,memory_cap=CAP,
-                  sources=source_hashes,dataset=dataset,initialization='exact parent plus restored optimizer and sampler/RNG',
+                  sources=source_hashes,dataset=dataset,initialization='fresh seed47 model and optimizer;zero inherited updates',
                   parent_sha256=PARENT_SHA,inherited_updates=INHERITED,waivers=WAIVERS,
-                  parent_result_sha256=digest(PARENT_RESULT),preflight_passed=False,controller_affinity=AFFINITY,worker_cpus=[16])
+                  parent_result_sha256=None,preflight_passed=False,controller_affinity=AFFINITY,worker_cpus=[16])
     write_json(OUT/'manifest.json',manifest)
     active={};finished=[];failed=[];handles=[]
     for kind in KINDS:

@@ -1,5 +1,5 @@
 {
-  "checkpoint": "artifacts/runs/residual64-long-10000-v1/continue_plain/last.pt",
+  "checkpoint": "artifacts/runs/residual64-fresh10m-60000-s47-v1/continue_plain/last.pt",
   "device": "auto",
   "host": "127.0.0.1",
   "port": 7860,

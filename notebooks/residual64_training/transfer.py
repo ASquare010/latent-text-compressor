@@ -1,32 +1,26 @@
-"""Exact continuation of the completed 10.46M model, including optimizer/RNG."""
+"""Fresh selected model; verify both repositories implement the same function."""
 from common import *
 import torch
 from growth import Config,Model
 
 def initialize(kind):
-    assert kind=='continue_plain' and digest(PARENT)==PARENT_SHA
-    result=json.loads(PARENT_RESULT.read_text(encoding='utf-8'))
-    audit=json.loads(PARENT.with_name('audit.json').read_text(encoding='utf-8'))
-    assert digest(PARENT_RESULT)==audit['result_sha256'] and result['last_sha256']==PARENT_SHA
-    for name,path in source_paths().items():
-        if name in ('growth.py','selected_model.py','selected_residual.py','selected_ffn.py'):
-            assert digest(path)==result['sources'][name],name
-    saved=torch.load(PARENT,map_location='cpu',weights_only=True)
-    assert saved['format']=='residual64-long-v1'
-    assert saved['step']==10000 and saved['inherited_updates']==34000
-    assert all(float(s['step'])==OPT_STEPS for s in saved['optimizer']['state'].values())
-    assert saved['config']==RECIPE['model'] and saved['seed']==SEED
-    assert saved['inherited_updates']+saved['step']==INHERITED
-    c=Config(**saved['config'])
-    assert (c.encoder_layers,c.decoder_layers,c.width,c.span,c.max_tokens,c.code_features)==(4,1,256,64,512,125)
-    model=Model(c,saved['seed']);model.load_state_dict(saved['model'],strict=True)
-    for n,v in model.state_dict().items():assert torch.equal(v,saved['model'][n]),n
+    assert kind=='continue_plain' and INHERITED==0 and OPT_STEPS==0 and STEPS==60000
+    config=Config(**RECIPE['model'])
+    assert (config.encoder_layers,config.decoder_layers,config.width,config.span,config.max_tokens,config.code_features)==(4,1,256,64,512,125)
+    model=Model(config,SEED)
     assert sum(p.numel() for p in model.parameters())==10456576
-    receipt=dict(parent_sha256=PARENT_SHA,parent_result_sha256=digest(PARENT_RESULT),
-        parent_updates=INHERITED,optimizer='restore full AdamW state, then constant lr3e-5',
-        inherited_weights_exact=True,initial_logits_and_vectors_exact=True,
-        exact_function_basis='identical computational sources, config and all state tensors',
-        sampler='restore checkpoint Python sampler state and torch CPU/CUDA RNG',
-        parent_target_schedule_sha256=saved['target_schedule_sha256'],
-        inherited_optimizer_steps=OPT_STEPS,parameters=10456576,encoder_parameters=model.encoder_parameters())
-    return model,receipt
+    assert model.encoder_parameters()==7327232
+    sys.path.insert(0,'D:/Git/complex_fnn/src')
+    from models.position_compressor.residual import Config as MainConfig,Model as MainModel
+    values=dict(RECIPE['model']);values.pop('routed_layers')
+    main_model=MainModel(MainConfig(**values),SEED)
+    main_model.load_state_dict(model.state_dict(),strict=True)
+    with torch.no_grad():
+        tokens=torch.arange(130).reshape(2,65)%4093+3
+        mask=torch.ones_like(tokens,dtype=torch.bool);mask[1,49:]=False;tokens[~mask]=0
+        torch.testing.assert_close(model(tokens,mask),main_model(tokens,mask),rtol=0,atol=0)
+        a,n=model.encode(tokens,mask);b,m=main_model.encode(tokens,mask)
+        torch.testing.assert_close(a,b,rtol=0,atol=0);assert torch.equal(n,m)
+    return model,dict(fresh_initialization=True,seed=SEED,parent_checkpoint=None,
+        parameters=10456576,encoder_parameters=7327232,optimizer='fresh AdamW',
+        learned_weights_loaded=False,inherited_updates=0,both_repo_residual_logits_and_vectors_exact=True)

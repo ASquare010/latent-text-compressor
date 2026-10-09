@@ -8,21 +8,21 @@ os.environ['TOKENIZERS_PARALLELISM']='false'
 import hashlib,json,math,sys,random
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
-REPO=HERE.parents[1]; ROOT=REPO
+REPO=Path('D:/Git/latent-text-compressor'); ROOT=REPO
 config_arg=sys.argv[sys.argv.index('--config')+1] if '--config' in sys.argv else str(REPO/'config/train.json')
 CONFIG_PATH=Path(config_arg).resolve()
 RECIPE=json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
-assert RECIPE['mode']=='residual64_continuation'
+assert RECIPE['mode']=='residual64_fresh'
 def resolve(value):
     p=Path(value);return p if p.is_absolute() else REPO/p
 OUT=resolve(RECIPE['output_dir'])
 sys.path.insert(0,str(REPO/'src'))
 STEPS=RECIPE['additional_updates'];SEED=RECIPE['sampler_seed'];KINDS=('continue_plain',);MICRO=2;ACCUM=4
 assert type(STEPS) is int and STEPS>0
-PARENT=resolve(RECIPE['checkpoint']);PARENT_SHA=RECIPE['checkpoint_sha256']
-PARENT_RESULT=PARENT.with_name('result.json')
+PARENT=None;PARENT_SHA=None
+PARENT_RESULT=None
 INHERITED=RECIPE['inherited_updates'];OPT_STEPS=RECIPE['inherited_optimizer_steps']
-assert 0<RECIPE['learning_rate']<=3e-5
+assert RECIPE['learning_rate']==6e-4 and INHERITED==0 and OPT_STEPS==0
 # Four jobs plus CUDA contexts must fit 8GiB. Actual peaks are reported separately.
 CAP=dict(allocated_mib=1300.,reserved_mib=1500.)
 
@@ -45,12 +45,18 @@ def source_paths():
     names=('common.py','runtime_affinity.py','transfer.py','growth.py','packed_data.py','objective.py','evaluate.py','memory.py','run.py')
     paths={n:HERE/n for n in names};paths['training_recipe.json']=CONFIG_PATH
     paths.update({'selected_'+p.name:p for p in (REPO/'src/latent_text').glob('*.py')})
+    main=Path('D:/Git/complex_fnn/src')
+    for name in ('models/position_compressor/residual.py','models/position_compressor/transformer.py','models/position_compressor/ffn.py','models/branch_sigmoid/transformer.py','models/components.py'):
+        paths['main_'+name.replace('/','_')]=main/name
     return paths
 def pins():return {n:digest(p) for n,p in sorted(source_paths().items())}
 def rank(report):
     s=report['summary'];return (-s['exact'],-s['token_accuracy'],s['nll'])
 def lr(step):
-    return RECIPE['learning_rate']
+    if step<=1000:return 6e-4*step/1000
+    fraction=(step-1000)/(STEPS-1000)
+    return 1e-5+(6e-4-1e-5)*.5*(1+math.cos(math.pi*fraction))
+
 def replay(a,b):
     assert a['payload']==b['payload']
     for k,v in a['summary'].items():assert abs(v-b['summary'][k])<1e-7,(k,v,b['summary'][k])

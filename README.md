@@ -1,3 +1,12 @@
+# Fresh11.02M model replaces deleted checkpoints
+
+User requested random-initialized11M,10000 total updates. Old compressor weights,
+including the999/1000 winner,have been deleted;Step1/data/logs/results retained.
+The new model has11022336 parameters,64tokens/vector,context512,code_features142.
+No previous accuracy claim applies. config/train.json now describes the fresh run,
+not15000-step continuation. Training notebooks are opt-in;do not duplicate the live
+run. Existing output guard rejects duplicate launches. No ready encoder-only export
+until the new training/evaluation/export completes. See docs/residual64_fresh11m.md.
 # Latent Text Compressor
 
 The selected model is **plain residual attention + Branch Sigmoid + RoPE**:

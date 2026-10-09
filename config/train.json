@@ -1,13 +1,13 @@
 {
-  "mode": "residual64_continuation",
-  "additional_updates": 15000,
-  "checkpoint": "artifacts/runs/residual64-long-10000-v1/continue_plain/last.pt",
-  "checkpoint_sha256": "2eabeb7bc46654893a17d2cf17838b464d7c8e2318d4fa0deee0c83f22878a24",
-  "output_dir": "artifacts/runs/residual64-continue-15000",
-  "learning_rate": 3e-05,
-  "inherited_updates": 44000,
-  "inherited_optimizer_steps": 14000,
-  "sampler_seed": 43,
+  "mode": "residual64_fresh",
+  "additional_updates": 60000,
+  "checkpoint": null,
+  "checkpoint_sha256": null,
+  "output_dir": "artifacts/runs/residual64-fresh10m-60000-s47-v1",
+  "learning_rate": 0.0006,
+  "inherited_updates": 0,
+  "inherited_optimizer_steps": 0,
+  "sampler_seed": 47,
   "data_dir": "D:/Git/complex_fnn/dump/data/paragraph-fineweb-v1",
   "packed_data_dir": "D:/Git/complex_fnn/dump/data/paragraph-packed512-affinity-v5",
   "model": {
@@ -29,5 +29,7 @@
     "code_features": 125,
     "routed_layers": 4
   },
-  "note": "Additional updates from saved model;no100% guarantee;does not run until explicitly invoked."
+  "note": "Fresh selected10.46M model;60000 total updates;warmup1000to6e-4 then cosine1e-5;zero inherited weights/optimizer.",
+  "warmup_updates": 1000,
+  "minimum_learning_rate": 1e-05
 }

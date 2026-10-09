@@ -86,7 +86,7 @@ def run(args):
         print(f"Prepared: {path}")
     elif args.command == "train":
         recipe = read_config(args.config)
-        if recipe.get("mode") == "residual64_continuation":
+        if recipe.get("mode") in ("residual64_continuation", "residual64_fresh"):
             if args.resume or args.stop_after:
                 raise ValueError("The continuation checkpoint and budget are set in config/train.json")
             import subprocess, sys
