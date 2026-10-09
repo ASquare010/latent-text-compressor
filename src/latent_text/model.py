@@ -8,10 +8,10 @@ import math
 from dataclasses import dataclass
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
+from torch.nn import functional as F
 
-from .ffn import CompressorBranchFFN, parameter_generator
+from .ffn import CompressorBranchFFN
 
 
 class RMSNorm(nn.Module):
@@ -40,9 +40,6 @@ class Config:
     pad_id: int = 0
     bos_id: int = 1
     eos_id: int = 2
-    positional: str = "learned"
-    rope_base: float = 10000.0
-    residual_scale_reference_layers: int | None = None
 
     def __post_init__(self):
         if self.ffn != "branch_sigmoid_v1" or type(self.hidden) is not int or self.hidden < 1:
@@ -60,22 +57,10 @@ class Config:
                 raise ValueError(f"{name} must be positive")
         if self.width % self.heads or self.span > self.max_tokens:
             raise ValueError("Width must divide into heads; span must fit max_tokens")
-<<<<<<< Updated upstream
         if self.position_encoding != "rope_v1" or self.width // self.heads % 2:
             raise ValueError("RoPE requires an even head dimension and rope_v1")
         if not math.isfinite(self.rope_base) or self.rope_base <= 1:
             raise ValueError("rope_base must be finite and greater than one")
-=======
-        if self.positional not in ("learned", "rope") or self.rope_base <= 0:
-            raise ValueError("Expected learned or rope positions and positive RoPE base")
-        if self.positional == "rope" and (self.width // self.heads) % 2:
-            raise ValueError("RoPE requires even head dimensions")
-        if self.residual_scale_reference_layers is not None and (
-            type(self.residual_scale_reference_layers) is not int
-            or self.residual_scale_reference_layers < 1
-        ):
-            raise ValueError("Residual scale reference must be positive")
->>>>>>> Stashed changes
         if (self.pad_id, self.bos_id, self.eos_id) != (0, 1, 2):
             raise ValueError("Data format uses pad=0, bos=1, eos=2")
 
@@ -84,7 +69,6 @@ class Attention(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.heads = config.heads
-        self.rope_base = config.rope_base if config.positional == "rope" else None
         self.query = nn.Linear(config.width, config.width, bias=False)
         self.key = nn.Linear(config.width, config.width, bias=False)
         self.value = nn.Linear(config.width, config.width, bias=False)
@@ -111,8 +95,6 @@ class Attention(nn.Module):
             return t.reshape(b, n, self.heads, d // self.heads).transpose(1, 2)
 
         q, k, v = split(self.query(x)), split(self.key(context)), split(self.value(context))
-        if self.rope_base is not None:
-            q, k = rotary(q, self.rope_base), rotary(k, self.rope_base)
         allowed = valid[:, None, None, :]
         if causal:
             allowed = (
@@ -121,15 +103,6 @@ class Attention(nn.Module):
             )
         y = F.scaled_dot_product_attention(self.rotate(q), self.rotate(k), v, attn_mask=allowed)
         return self.out(y.transpose(1, 2).reshape_as(x))
-
-
-def rotary(x, base=10000.0):
-    """Rotate adjacent Q/K pairs; compute angles in FP32, retain activation dtype."""
-    frequencies = base ** (-torch.arange(0, x.shape[-1], 2, device=x.device).float() / x.shape[-1])
-    angles = torch.arange(x.shape[-2], device=x.device).float()[:, None] * frequencies
-    cosine, sine = angles.cos().to(x.dtype), angles.sin().to(x.dtype)
-    even, odd = x[..., 0::2], x[..., 1::2]
-    return torch.stack((even * cosine - odd * sine, even * sine + odd * cosine), -1).flatten(-2)
 
 
 class EncoderBlock(nn.Module):
@@ -156,12 +129,6 @@ class Model(nn.Module):
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(seed)
             self.embedding = nn.Embedding(c.vocab_size, c.width)
-<<<<<<< Updated upstream
-=======
-            self.position = (
-                nn.Embedding(c.max_tokens, c.width) if c.positional == "learned" else None
-            )
->>>>>>> Stashed changes
             self.encoder = nn.ModuleList([EncoderBlock(c) for _ in range(c.encoder_layers)])
             self.encoder_norm = RMSNorm(c.width)
             # Concatenation preserves the order inside each span, unlike weighted averaging.
@@ -169,18 +136,12 @@ class Model(nn.Module):
             self.expand = nn.Linear(c.width, c.span * c.width, bias=False)
             self.decoder = nn.ModuleList([EncoderBlock(c) for _ in range(c.decoder_layers)])
             self.decoder_norm = RMSNorm(c.width)
-            for name, module in self.named_modules():
+            for module in self.modules():
                 if isinstance(module, (nn.Linear, nn.Embedding)):
-                    generator = (
-                        parameter_generator(seed, name + ".weight")
-                        if c.positional == "rope"
-                        else None
-                    )
-                    nn.init.normal_(module.weight, std=0.02, generator=generator)
+                    nn.init.normal_(module.weight, std=0.02)
             for name, module in self.named_modules():
                 if isinstance(module, CompressorBranchFFN):
-                    reference = c.residual_scale_reference_layers or c.encoder_layers
-                    module.initialize(seed, name, 1 / math.sqrt(2 * reference))
+                    module.initialize(seed, name, 1 / math.sqrt(2 * c.encoder_layers))
 
     def encode(self, tokens, mask):
         c = self.config
@@ -191,11 +152,6 @@ class Model(nn.Module):
         if (mask[:, 1:] & ~mask[:, :-1]).any():
             raise ValueError("Use right padding")
         x = self.embedding(tokens)
-<<<<<<< Updated upstream
-=======
-        if self.position is not None:
-            x = x + self.position(torch.arange(tokens.shape[1], device=tokens.device))
->>>>>>> Stashed changes
         for block in self.encoder:
             x = block(x, mask)
         x = self.encoder_norm(x) * mask.unsqueeze(-1)
@@ -218,11 +174,6 @@ class Model(nn.Module):
         x = self.expand(z).reshape(z.shape[0], -1, c.width)[:, : int(lengths.max())]
         positions = torch.arange(x.shape[1], device=x.device)
         mask = positions[None] < lengths[:, None]
-<<<<<<< Updated upstream
-=======
-        if self.position is not None:
-            x = x + self.position(positions)
->>>>>>> Stashed changes
         for block in self.decoder:
             x = block(x, mask)
         return F.linear(self.decoder_norm(x), self.embedding.weight)
