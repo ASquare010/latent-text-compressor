@@ -696,8 +696,18 @@ def _worker(folder, c, protocol, name, resume):
                 print(f"Validating at step {step:,}...", flush=True)
                 metrics = evaluate_pair(model, c, micro)
                 validations.append({"step": step, "metrics": metrics})
-                score = metrics["shared_short"]["groups"]["all"]
-                key = [-score["exact"], score["nll"], step]
+                # Rank both suites; convert the inherited best to the same policy.
+                def selection_key(item):
+                    suites = [item["metrics"][s]["groups"]["all"]
+                              for s in ("shared_short", "packed_task")]
+                    return [sum(s["sequences"] - s["exact"] for s in suites),
+                            sum(s["tokens"] - s["correct_tokens"] for s in suites),
+                            sum(s["nll_sum"] for s in suites) / sum(s["tokens"] for s in suites),
+                            item["step"]]
+                if best is not None:
+                    previous = next(v for v in validations if v["step"] == best["step"])
+                    best = {"step": best["step"], "key": selection_key(previous)}
+                key = selection_key(validations[-1])
                 if best is None or key < best["key"]:
                     best = {"step": step, "key": key}
                 atomic_json(folder / "validation" / f"step-{step:06d}.json", validations[-1])
